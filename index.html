@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Curve-Crash: Echo</title>
     <style>
-        /* This CSS gives us the sleek, neon-on-black aesthetic */
         body {
             background-color: #000;
             color: #fff;
@@ -19,21 +18,18 @@
             min-height: 100vh;
             overflow: hidden;
         }
-
         h1 {
             font-weight: 300;
             letter-spacing: 4px;
             color: #eee;
         }
-
-        /* The canvas is where the game happens. The filter creates the neon glow. */
         canvas {
             background-color: #0a0a0a;
             border: 1px solid #333;
-            /* This filter is the "magic" for the glow effect */
             filter: drop-shadow(0 0 10px #555);
+            /* --- FIX 1: Add cursor pointer --- */
+            cursor: pointer;
         }
-
         #ui {
             display: flex;
             justify-content: space-between;
@@ -41,19 +37,10 @@
             padding: 10px;
             box-sizing: border-box;
         }
-
-        .player-info {
-            flex-basis: 45%;
-        }
-        
+        .player-info { flex-basis: 45%; }
         #p1-info { color: #00ffff; text-align: left; }
         #p2-info { color: #ff00ff; text-align: right; }
-
-        .score {
-            font-size: 2.5em;
-            font-weight: bold;
-        }
-
+        .score { font-size: 2.5em; font-weight: bold; }
         .boost-meter {
             width: 100%;
             height: 10px;
@@ -61,16 +48,13 @@
             border: 1px solid #555;
             margin-top: 5px;
         }
-
         .boost-bar {
             height: 100%;
             width: 100%;
             transition: width 0.1s linear;
         }
-
         #p1-boost-bar { background-color: #00ffff; }
         #p2-boost-bar { background-color: #ff00ff; }
-
         #message {
             position: absolute;
             top: 40%;
@@ -79,13 +63,14 @@
             font-size: 3em;
             text-align: center;
             text-shadow: 0 0 10px #fff;
-            display: none; /* Hidden by default */
+            display: none;
+            /* Clicks shouldn't be blocked by the message */
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
     <h1>CURVE-CRASH</h1>
-
     <div id="ui">
         <div id="p1-info" class="player-info">
             <div class="score" id="p1-score">0</div>
@@ -98,48 +83,39 @@
             <div class="boost-meter"><div class="boost-bar" id="p2-boost-bar"></div></div>
         </div>
     </div>
-
     <canvas id="gameCanvas" width="800" height="500"></canvas>
-
     <div id="message"></div>
 
     <script>
         // --- 1. SETUP & CONSTANTS ---
-
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-
-        // UI Elements
         const p1ScoreEl = document.getElementById('p1-score');
         const p2ScoreEl = document.getElementById('p2-score');
         const p1BoostEl = document.getElementById('p1-boost-bar');
         const p2BoostEl = document.getElementById('p2-boost-bar');
         const messageEl = document.getElementById('message');
 
-        // Game Settings
-        const FRICTION = 0.9; // Not used, but could be for a different mode
         const PLAYER_SIZE = 10;
         const PLAYER_SPEED = 2;
         const BOOST_SPEED = 4;
         const BRAKE_SPEED = 1;
-        const TURN_SPEED = 0.08; // Radians per frame
-        const BOOST_DURATION = 1 * 60; // 1 second (60 frames)
-        const BOOST_COOLDOWN = 4 * 60; // 4 seconds
-        const TRAIL_LIFETIME = 8 * 60; // 8 seconds
+        const TURN_SPEED = 0.08;
+        const BOOST_DURATION = 1 * 60;
+        const BOOST_COOLDOWN = 4 * 60;
+        const TRAIL_LIFETIME = 8 * 60;
         const TRAIL_WIDTH = 4;
         const WIN_SCORE = 7;
 
-        // Game State
-        let gameState = 'start'; // 'start', 'countdown', 'playing', 'roundOver', 'gameOver'
-        let trails = []; // Will store all trail segments
-        let particles = []; // For explosions
-        let keys = {}; // Input handler
+        let gameState = 'start';
+        let trails = [];
+        let particles = [];
+        let keys = {};
         let player1, player2;
 
         // --- 2. INPUT HANDLING ---
 
         window.addEventListener('keydown', (e) => {
-            // Prevent arrow keys from scrolling the page
             if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.key)) {
                 e.preventDefault();
             }
@@ -150,21 +126,27 @@
             keys[e.key] = false;
         });
 
-        // --- 3. PLAYER CLASS ---
+        // --- FIX 2: Add a CLICK listener ---
+        canvas.addEventListener('click', () => {
+            if (gameState === 'start') {
+                startCountdown();
+            } else if (gameState === 'gameOver') {
+                initGame();
+            }
+        });
 
+        // --- 3. PLAYER CLASS ---
         class Player {
             constructor(x, y, angle, color, controls) {
                 this.x = x;
                 this.y = y;
-                this.angle = angle; // Radians
+                this.angle = angle;
                 this.color = color;
                 this.controls = controls;
-                
                 this.speed = PLAYER_SPEED;
                 this.isBoosting = false;
                 this.boostTimer = 0;
-                this.boostCooldownTimer = BOOST_COOLDOWN; // Start ready
-                
+                this.boostCooldownTimer = BOOST_COOLDOWN;
                 this.isBraking = false;
                 this.isDead = false;
                 this.score = 0;
@@ -172,58 +154,29 @@
 
             update() {
                 if (this.isDead) return;
-
-                // Handle Input
-                if (keys[this.controls.left]) {
-                    this.angle -= TURN_SPEED;
-                }
-                if (keys[this.controls.right]) {
-                    this.angle += TURN_SPEED;
-                }
-
-                // Handle Boost
+                if (keys[this.controls.left]) { this.angle -= TURN_SPEED; }
+                if (keys[this.controls.right]) { this.angle += TURN_SPEED; }
                 if (keys[this.controls.up] && this.boostCooldownTimer >= BOOST_COOLDOWN) {
                     this.isBoosting = true;
                     this.boostTimer = BOOST_DURATION;
                     this.boostCooldownTimer = 0;
                 }
-
-                // Handle Brake
                 this.isBraking = keys[this.controls.down] && !this.isBoosting;
-
-                // Update Timers
                 if (this.isBoosting) {
                     this.boostTimer--;
-                    if (this.boostTimer <= 0) {
-                        this.isBoosting = false;
-                    }
+                    if (this.boostTimer <= 0) { this.isBoosting = false; }
                 } else {
-                    if (this.boostCooldownTimer < BOOST_COOLDOWN) {
-                        this.boostCooldownTimer++;
-                    }
+                    if (this.boostCooldownTimer < BOOST_COOLDOWN) { this.boostCooldownTimer++; }
                 }
-
-                // Set Speed
-                if (this.isBoosting) {
-                    this.speed = BOOST_SPEED;
-                } else if (this.isBraking) {
-                    this.speed = BRAKE_SPEED;
-                } else {
-                    this.speed = PLAYER_SPEED;
-                }
+                if (this.isBoosting) { this.speed = BOOST_SPEED; }
+                else if (this.isBraking) { this.speed = BRAKE_SPEED; }
+                else { this.speed = PLAYER_SPEED; }
                 
-                // --- Movement ---
                 const moveX = Math.cos(this.angle) * this.speed;
                 const moveY = Math.sin(this.angle) * this.speed;
-
-                // Add to trail *before* moving
-                // This makes collision detection easier
                 trails.push(new TrailSegment(this.x, this.y, this.color));
-
                 this.x += moveX;
                 this.y += moveY;
-
-                // --- Collision Detection ---
                 this.checkWallCollision();
                 this.checkTrailCollision();
             }
@@ -235,16 +188,11 @@
             }
 
             checkTrailCollision() {
-                // Check against all trail segments
-                // This is a simple but effective distance check
                 for (let segment of trails) {
-                    // Don't check against the very last few segments (our own fresh trail)
                     if (segment.lifetime > TRAIL_LIFETIME - 15) continue;
-                    
                     const dx = this.x - segment.x;
                     const dy = this.y - segment.y;
                     const distance = Math.sqrt(dx * dx + dy * dy);
-
                     if (distance < TRAIL_WIDTH / 2) {
                         this.die();
                         break;
@@ -254,36 +202,27 @@
 
             die() {
                 this.isDead = true;
-                // Create an explosion
                 for (let i = 0; i < 30; i++) {
                     particles.push(new Particle(this.x, this.y, this.color));
                 }
-                // Stop the player
                 this.speed = 0;
             }
 
             draw() {
                 if (this.isDead) return;
-
-                // Draw the player "bike" as a triangle
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.angle);
-                
                 ctx.fillStyle = this.color;
                 ctx.shadowColor = this.color;
                 ctx.shadowBlur = 15;
-
                 ctx.beginPath();
-                ctx.moveTo(PLAYER_SIZE, 0); // Nose
-                ctx.lineTo(-PLAYER_SIZE / 2, -PLAYER_SIZE / 2); // Back left
-                ctx.lineTo(-PLAYER_SIZE / 2, PLAYER_SIZE / 2); // Back right
+                ctx.moveTo(PLAYER_SIZE, 0);
+                ctx.lineTo(-PLAYER_SIZE / 2, -PLAYER_SIZE / 2);
+                ctx.lineTo(-PLAYER_SIZE / 2, PLAYER_SIZE / 2);
                 ctx.closePath();
                 ctx.fill();
-
                 ctx.restore();
-                
-                // Reset shadow blur for other elements
                 ctx.shadowBlur = 0;
             }
 
@@ -297,7 +236,6 @@
         }
 
         // --- 4. TRAIL & PARTICLE CLASSES ---
-
         class TrailSegment {
             constructor(x, y, color) {
                 this.x = x;
@@ -305,25 +243,15 @@
                 this.color = color;
                 this.lifetime = TRAIL_LIFETIME;
             }
-
-            update() {
-                this.lifetime--;
-            }
-
+            update() { this.lifetime--; }
             draw() {
-                // Fade out the trail
                 const alpha = this.lifetime / TRAIL_LIFETIME;
-                
                 ctx.fillStyle = this.color;
                 ctx.globalAlpha = alpha;
-                
-                // We draw simple circles. Lines are more complex.
-                // For performance, this is fine.
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, TRAIL_WIDTH / 2, 0, Math.PI * 2);
                 ctx.fill();
-
-                ctx.globalAlpha = 1.0; // Reset alpha
+                ctx.globalAlpha = 1.0;
             }
         }
 
@@ -333,32 +261,27 @@
                 this.y = y;
                 this.color = color;
                 this.size = Math.random() * 3 + 1;
-                this.lifetime = 60; // 1 second
-                this.vx = (Math.random() - 0.5) * 5; // Velocity X
-                this.vy = (Math.random() - 0.5) * 5; // Velocity Y
+                this.lifetime = 60;
+                this.vx = (Math.random() - 0.5) * 5;
+                this.vy = (Math.random() - 0.5) * 5;
             }
-
             update() {
                 this.x += this.vx;
                 this.y += this.vy;
                 this.lifetime--;
             }
-
             draw() {
                 const alpha = this.lifetime / 60;
                 ctx.fillStyle = this.color;
                 ctx.globalAlpha = alpha;
-                
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
                 ctx.fill();
-
                 ctx.globalAlpha = 1.0;
             }
         }
 
         // --- 5. GAME LOGIC & STATE ---
-
         function initGame() {
             player1 = new Player(100, canvas.height / 2, 0, '#00ffff', {
                 up: 'w', down: 's', left: 'a', right: 'd'
@@ -366,33 +289,27 @@
             player2 = new Player(canvas.width - 100, canvas.height / 2, Math.PI, '#ff00ff', {
                 up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight'
             });
-
-            // Set initial scores
             player1.score = 0;
             player2.score = 0;
             updateScoreUI();
-
             gameState = 'start';
-            // --- FIX 1 ---
-            showMessage(`Press ENTER to start`);
+            // --- FIX 3: Update message ---
+            showMessage(`Click to Start`);
         }
         
         function resetRound() {
             trails = [];
             particles = [];
-            
             player1.x = 100;
             player1.y = canvas.height / 2;
-            player1.angle = 0; // Face right
+            player1.angle = 0;
             player1.isDead = false;
-            player1.boostCooldownTimer = BOOST_COOLDOWN; // Reset boost
-
+            player1.boostCooldownTimer = BOOST_COOLDOWN;
             player2.x = canvas.width - 100;
             player2.y = canvas.height / 2;
-            player2.angle = Math.PI; // Face left
+            player2.angle = Math.PI;
             player2.isDead = false;
-            player2.boostCooldownTimer = BOOST_COOLDOWN; // Reset boost
-            
+            player2.boostCooldownTimer = BOOST_COOLDOWN;
             startCountdown();
         }
 
@@ -400,7 +317,6 @@
             gameState = 'countdown';
             let count = 3;
             showMessage(count);
-
             const timer = setInterval(() => {
                 count--;
                 if (count > 0) {
@@ -418,30 +334,22 @@
 
         function handleRoundOver() {
             gameState = 'roundOver';
-
             if (player1.isDead && player2.isDead) {
-                // A draw! No points.
                 showMessage('DRAW');
             } else if (player1.isDead) {
-                // Player 2 wins the round
                 player2.score++;
                 showMessage('PLAYER 2 WINS ROUND');
             } else if (player2.isDead) {
-                // Player 1 wins the round
                 player1.score++;
                 showMessage('PLAYER 1 WINS ROUND');
             }
-            
             updateScoreUI();
-
-            // Check for game over
             if (player1.score >= WIN_SCORE || player2.score >= WIN_SCORE) {
                 gameState = 'gameOver';
                 let winner = player1.score > player2.score ? 'PLAYER 1' : 'PLAYER 2';
-                // --- FIX 2 ---
-                showMessage(`${winner} WINS!\n(Press ENTER)`);
+                // --- FIX 4: Update message ---
+                showMessage(`${winner} WINS!\n(Click to Restart)`);
             } else {
-                // Start next round
                 setTimeout(resetRound, 3000);
             }
         }
@@ -452,7 +360,7 @@
         }
 
         function showMessage(text) {
-            messageEl.innerHTML = text.replace('\n', '<br>');
+            messageEl.innerHTML = text.toString().replace('\n', '<br>');
             messageEl.style.display = 'block';
         }
 
@@ -461,80 +369,44 @@
         }
 
         // --- 6. MAIN GAME LOOP ---
-
         function gameLoop() {
-            // --- Clear Canvas ---
-            // We use a semi-transparent black to create a "motion blur" effect
-            ctx.fillStyle = 'rgba(10, 10, 10, 0.8)'; // Faded clear
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.8)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // --- FIX 3 --- (Replaced the "any key" logic)
-            if (gameState === 'start' && keys['Enter']) {
-                keys['Enter'] = false; // Consume the keypress
-                startCountdown();
-            }
-            
-            // --- FIX 4 --- (Replaced the "any key" logic)
-            if (gameState === 'gameOver' && keys['Enter']) {
-                keys['Enter'] = false; // Consume the keypress
-                initGame();
-                return; // Exit loop, restart on next frame
-            }
+            // --- FIX 5: Remove all 'Enter' key logic ---
+            // (The click listener now handles this)
 
-            // --- Update ---
             if (gameState === 'playing') {
                 player1.update();
                 player2.update();
             }
 
-            // Update trails (and remove old ones)
             for (let i = trails.length - 1; i >= 0; i--) {
                 trails[i].update();
-                if (trails[i].lifetime <= 0) {
-                    trails.splice(i, 1);
-                }
+                if (trails[i].lifetime <= 0) { trails.splice(i, 1); }
             }
-
-            // Update particles
             for (let i = particles.length - 1; i >= 0; i--) {
                 particles[i].update();
-                if (particles[i].lifetime <= 0) {
-                    particles.splice(i, 1);
-                }
+                if (particles[i].lifetime <= 0) { particles.splice(i, 1); }
             }
 
-            // --- Check for Round End ---
             if (gameState === 'playing' && (player1.isDead || player2.isDead)) {
                 handleRoundOver();
             }
 
-            // --- Draw ---
-            
-            // Draw trails
-            for (let segment of trails) {
-                segment.draw();
-            }
-
-            // Draw players
+            for (let segment of trails) { segment.draw(); }
             player1.draw();
             player2.draw();
-
-            // Draw particles
-            for (let particle of particles) {
-                particle.draw();
-            }
-
-            // Draw UI (Boost Bars)
+            for (let particle of particles) { particle.draw(); }
             player1.drawBoostBar(p1BoostEl);
             player2.drawBoostBar(p2BoostEl);
 
-            // --- Request Next Frame ---
             requestAnimationFrame(gameLoop);
         }
 
         // --- 7. START THE GAME ---
-        initGame(); // Set up the game
-        gameLoop(); // Start the loop
+        initGame();
+        gameLoop();
     </script>
 </body>
 </html>
