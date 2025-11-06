@@ -65,13 +65,29 @@
             width: 640px;
         }
         
-        /* --- NEW: Style for the arena name --- */
         #arena-name {
             font-size: 1em;
             color: #888;
             width: 640px;
             text-align: center;
             height: 1.2em;
+        }
+        #game-mode {
+            font-size: 1.2em;
+            color: #fff;
+            text-shadow: 0 0 5px #ff0;
+            margin-bottom: 5px;
+            text-align: center;
+            width: 640px;
+        }
+        /* Style for CTF Timer in-game */
+        #ctf-timer {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 8px #f00;
+            text-align: center;
+            width: 640px;
         }
     </style>
 </head>
@@ -93,6 +109,9 @@
     <div id="message"></div>
     
     <div id="arena-name"></div>
+
+    <div id="game-mode"></div>
+    <div id="ctf-timer" style="display: none;"></div>
     
     <canvas id="gameCanvas" width="640" height="400"></canvas>
 
@@ -107,10 +126,10 @@
         const p1InfoEl = document.getElementById('p1-info');
         const p2InfoEl = document.getElementById('p2-info');
         const messageEl = document.getElementById('message');
-        
-        // --- NEW ---
         const arenaNameEl = document.getElementById('arena-name');
-
+        const gameModeEl = document.getElementById('game-mode');
+        const ctfTimerEl = document.getElementById('ctf-timer');
+        
         const PLAYER_SIZE = 10;
         const PLAYER_SPEED = 2;
         const BOOST_SPEED = 4;
@@ -123,11 +142,23 @@
         const WIN_SCORE = 7;
         const SPAWN_IMMUNITY_TIME = 60;
         const SUDDEN_DEATH_TIME = 45 * 60;
+        
+        // --- CTF CONSTANTS ---
+        const CTF_ROUND_TIME = 120 * 60; // 2 minutes in frames
+        const FLAG_RADIUS = 10;
+        const P1_HOME_X = 80;
+        const P2_HOME_X = 640 - 80;
 
         const colorPalette = [
             '#00ffff', '#ff00ff', '#00ff00', '#ffff00', '#ff8000',
             '#ffffff', '#ff0000', '#0080ff', '#8000ff', '#008000'
         ];
+        
+        // --- GAME MODE LIST ---
+        const MODES = ['DEATHMATCH', 'CTF MODE']; 
+        let p1ModeIndex = 0; // NEW
+        let p2ModeIndex = 0; // NEW
+        
         let p1ColorIndex = 0;
         let p2ColorIndex = 1;
         let p1Ready = false;
@@ -142,41 +173,22 @@
         let roundTimer = 0;
         let isSuddenDeath = false;
         
-        // --- NEW: Arena Definitions ---
+        let gameMode = 'DEATHMATCH';
+        let p1Flag, p2Flag;
+        let ctfRoundTimer = CTF_ROUND_TIME;
+        let p1RoundScore = 0;
+        let p2RoundScore = 0;
+        
         const arenas = [
-            {
-                name: "The Classic",
-                obstacles: [],
-                wrapWalls: false
-            },
-            {
-                name: "The Pillars",
-                obstacles: [
-                    { x: 200, y: 100, width: 40, height: 200 },
-                    { x: 400, y: 100, width: 40, height: 200 }
-                ],
-                wrapWalls: false
-            },
-            {
-                name: "The Hourglass",
-                obstacles: [
-                    { x: 0, y: 0, width: 220, height: 100 },
-                    { x: 420, y: 0, width: 220, height: 100 },
-                    { x: 0, y: 300, width: 220, height: 100 },
-                    { x: 420, y: 300, width: 220, height: 100 }
-                ],
-                wrapWalls: false
-            },
-            {
-                name: "The Open",
-                obstacles: [],
-                wrapWalls: true
-            }
+            { name: "The Classic", obstacles: [], wrapWalls: false },
+            { name: "The Pillars", obstacles: [ { x: 200, y: 100, width: 40, height: 200 }, { x: 400, y: 100, width: 40, height: 200 } ], wrapWalls: false },
+            { name: "The Hourglass", obstacles: [ { x: 0, y: 0, width: 220, height: 100 }, { x: 420, y: 0, width: 220, height: 100 }, { x: 0, y: 300, width: 220, height: 100 }, { x: 420, y: 300, width: 220, height: 100 } ], wrapWalls: false },
+            { name: "The Open", obstacles: [], wrapWalls: true }
         ];
         let currentArenaIndex = 0;
         let currentArena = arenas[0];
 
-        // --- 2. INPUT HANDLING ---
+        // --- 2. INPUT HANDLING (Updated for Mode Select) ---
 
         window.addEventListener('keydown', (e) => {
             if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "a", "d", "w", "s"].includes(e.key)) {
@@ -184,6 +196,8 @@
             }
             if (gameState === 'colorSelect') {
                 handleColorKeys(e.key);
+            } else if (gameState === 'modeSelect') { // NEW
+                handleModeKeys(e.key); // NEW
             }
             keys[e.key] = true;
         });
@@ -194,15 +208,17 @@
 
         canvas.addEventListener('click', () => {
             if (gameState === 'start') {
-                startCountdown();
+                gameState = 'colorSelect';
+                updateColorUI();
+                updateReadyMessage();
             } else if (gameState === 'gameOver') {
                 initGame();
             }
         });
 
-        // --- 3. PLAYER CLASS ---
+        // --- 3. PLAYER CLASS, FLAG CLASS, TRAIL, PARTICLE (Unchanged for brevity) ---
         class Player {
-            constructor(x, y, angle, color, controls) {
+            constructor(x, y, angle, color, controls, isP1) {
                 this.x = x;
                 this.y = y;
                 this.angle = angle;
@@ -216,13 +232,17 @@
                 this.isDead = false;
                 this.score = 0;
                 this.immunityTimer = 0;
+                this.isP1 = isP1;
+                this.carryingFlag = null;
             }
 
             update() {
                 if (this.isDead) return;
+                
                 if (this.immunityTimer > 0) { this.immunityTimer--; }
                 if (keys[this.controls.left]) { this.angle -= TURN_SPEED; }
                 if (keys[this.controls.right]) { this.angle += TURN_SPEED; }
+                
                 if (keys[this.controls.up] && this.boostCooldownTimer >= BOOST_COOLDOWN) {
                     this.isBoosting = true;
                     this.boostTimer = BOOST_DURATION;
@@ -241,39 +261,83 @@
                 
                 const moveX = Math.cos(this.angle) * this.speed;
                 const moveY = Math.sin(this.angle) * this.speed;
+                
                 trails.push(new TrailSegment(this.x, this.y, this.color));
+
                 this.x += moveX;
                 this.y += moveY;
+                
                 this.checkWallCollision();
-                // --- NEW ---
                 this.checkObstacleCollision();
                 this.checkTrailCollision();
+                
+                if (gameMode === 'CTF MODE') {
+                    this.checkFlagInteraction();
+                }
+                
+                if (this.carryingFlag) {
+                    this.carryingFlag.x = this.x;
+                    this.carryingFlag.y = this.y;
+                }
+            }
+            
+            checkFlagInteraction() {
+                const homeFlag = this.isP1 ? p1Flag : p2Flag;
+                const enemyFlag = this.isP1 ? p2Flag : p1Flag;
+                const homeX = this.isP1 ? P1_HOME_X : P2_HOME_X;
+                
+                // 1. Capture Enemy Flag
+                if (!this.carryingFlag && !enemyFlag.isCarried) {
+                    const dist = Math.sqrt(Math.pow(this.x - enemyFlag.x, 2) + Math.pow(this.y - enemyFlag.y, 2));
+                    if (dist < PLAYER_SIZE + FLAG_RADIUS) {
+                        this.carryingFlag = enemyFlag;
+                        enemyFlag.isCarried = true;
+                    }
+                }
+                
+                // 2. Score with Flag
+                if (this.carryingFlag && this.carryingFlag.isP1 !== this.isP1) {
+                    if (Math.abs(this.x - homeX) < 60) {
+                        this.isP1 ? p1RoundScore++ : p2RoundScore++;
+                        
+                        this.carryingFlag.isCarried = false;
+                        this.carryingFlag = null;
+                        this.isP1 ? p2Flag.reset() : p1Flag.reset();
+                        
+                        showMessage(`${this.isP1 ? 'PLAYER 1' : 'PLAYER 2'} SCORED! (Score: ${this.isP1 ? p1RoundScore : p2RoundScore})`);
+                        setTimeout(hideMessage, 1000);
+                    }
+                }
+                
+                // 3. Return your own dropped flag
+                if (homeFlag.isDropped && !this.carryingFlag) {
+                    const dist = Math.sqrt(Math.pow(this.x - homeFlag.x, 2) + Math.pow(this.y - homeFlag.y, 2));
+                    if (dist < PLAYER_SIZE + FLAG_RADIUS) {
+                        homeFlag.reset();
+                        showMessage(`${this.isP1 ? 'P1' : 'P2'} RETURNED THEIR FLAG!`);
+                        setTimeout(hideMessage, 1000);
+                    }
+                }
             }
 
             checkWallCollision() {
                 if (this.immunityTimer > 0) return;
-
-                // --- NEW: Handle wall wrapping ---
                 if (currentArena.wrapWalls) {
                     if (this.x < 0) this.x = canvas.width;
                     if (this.x > canvas.width) this.x = 0;
                     if (this.y < 0) this.y = canvas.height;
                     if (this.y > canvas.height) this.y = 0;
                 } else {
-                    // Normal wall collision
                     if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
                         this.die();
                     }
                 }
             }
 
-            // --- NEW: Obstacle Collision ---
             checkObstacleCollision() {
                 if (this.immunityTimer > 0) return;
-
                 const playerRadius = PLAYER_SIZE / 2;
                 for (let obs of currentArena.obstacles) {
-                    // Simple AABB collision check
                     if (this.x + playerRadius > obs.x &&
                         this.x - playerRadius < obs.x + obs.width &&
                         this.y + playerRadius > obs.y &&
@@ -310,27 +374,46 @@
                     particles.push(new Particle(this.x, this.y, this.color));
                 }
                 this.speed = 0;
+                
+                if (this.carryingFlag) {
+                    this.carryingFlag.isCarried = false;
+                    this.carryingFlag.isDropped = true;
+                    this.carryingFlag = null;
+                }
             }
 
             draw() {
                 if (this.isDead) return;
+                let draw = true;
                 if (this.immunityTimer > 0 && Math.floor(this.immunityTimer / 6) % 2 === 0) {
-                    return;
+                    draw = false;
                 }
-                ctx.save();
-                ctx.translate(this.x, this.y);
-                ctx.rotate(this.angle);
-                ctx.fillStyle = this.color;
-                ctx.shadowColor = this.color;
-                ctx.shadowBlur = 15;
-                ctx.beginPath();
-                ctx.moveTo(PLAYER_SIZE, 0);
-                ctx.lineTo(-PLAYER_SIZE / 2, -PLAYER_SIZE / 2);
-                ctx.lineTo(-PLAYER_SIZE / 2, PLAYER_SIZE / 2);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
+                
+                if (this.carryingFlag) {
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = 20;
+                    draw = true;
+                }
+
+                if (draw) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.angle);
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.moveTo(PLAYER_SIZE, 0);
+                    ctx.lineTo(-PLAYER_SIZE / 2, -PLAYER_SIZE / 2);
+                    ctx.lineTo(-PLAYER_SIZE / 2, PLAYER_SIZE / 2);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.restore();
+                }
+
                 ctx.shadowBlur = 0;
+                
+                if (this.carryingFlag) {
+                    this.carryingFlag.drawSymbol(this.x, this.y - 20);
+                }
             }
 
             drawBoostBar(element) {
@@ -341,8 +424,66 @@
                 element.style.width = `${percent}%`;
             }
         }
+        
+        class Flag {
+            constructor(x, y, color, isP1Flag) {
+                this.initialX = x;
+                this.initialY = y;
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.isP1 = isP1Flag; 
+                this.isCarried = false;
+                this.isDropped = false;
+            }
+            
+            reset() {
+                this.x = this.initialX;
+                this.y = this.initialY;
+                this.isCarried = false;
+                this.isDropped = false;
+            }
 
-        // --- 4. TRAIL & PARTICLE CLASSES ---
+            draw() {
+                if (this.isCarried) return;
+                
+                ctx.save();
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 15;
+
+                // Draw Pole
+                ctx.fillRect(this.x - 1, this.y, 2, 20);
+                // Draw Flag
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                
+                const direction = this.isP1 ? 1 : -1;
+                ctx.lineTo(this.x + FLAG_RADIUS * 2 * direction, this.y + FLAG_RADIUS);
+                ctx.lineTo(this.x, this.y + FLAG_RADIUS);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+            }
+            
+            drawSymbol(x, y) {
+                 ctx.save();
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 5;
+
+                // Draw small flag shape
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + FLAG_RADIUS, y + FLAG_RADIUS / 2);
+                ctx.lineTo(x, y + FLAG_RADIUS / 2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+        
         class TrailSegment {
             constructor(x, y, color) {
                 this.x = x;
@@ -390,10 +531,53 @@
                 ctx.globalAlpha = 1.0;
             }
         }
+        
+        // --- 4. NEW GAME MODE SELECTION LOGIC ---
 
+        function handleModeKeys(key) {
+            // Player 1 Mode Select
+            if (key === 'a' && !p1Ready) {
+                p1ModeIndex = (p1ModeIndex - 1 + MODES.length) % MODES.length;
+            }
+            if (key === 'd' && !p1Ready) {
+                p1ModeIndex = (p1ModeIndex + 1) % MODES.length;
+            }
+            if (key === 'w') { p1Ready = true; }
+            if (key === 's') { p1Ready = false; }
 
-        // --- 5. GAME LOGIC & STATE ---
+            // Player 2 Mode Select
+            if (key === 'ArrowLeft' && !p2Ready) {
+                p2ModeIndex = (p2ModeIndex - 1 + MODES.length) % MODES.length;
+            }
+            if (key === 'ArrowRight' && !p2Ready) {
+                p2ModeIndex = (p2ModeIndex + 1) % MODES.length;
+            }
+            if (key === 'ArrowUp') { p2Ready = true; }
+            if (key === 'ArrowDown') { p2Ready = false; }
 
+            updateModeMessage();
+
+            if (p1Ready && p2Ready) {
+                if (p1ModeIndex === p2ModeIndex) {
+                    gameMode = MODES[p1ModeIndex];
+                    gameState = 'colorSelect';
+                    p1Ready = false; // Reset ready flags for color select
+                    p2Ready = false;
+                    updateReadyMessage(); // Show color select message
+                } else {
+                    showMessage("MODES MUST MATCH!\n" + MODES[p1ModeIndex] + " vs " + MODES[p2ModeIndex]);
+                }
+            }
+        }
+        
+        function updateModeMessage() {
+            let p1Text = p1Ready ? "P1: READY" : `P1: <A/D> ${MODES[p1ModeIndex]}`;
+            let p2Text = p2Ready ? "P2: READY" : `P2: <L/R> ${MODES[p2ModeIndex]}`;
+            showMessage(`SELECT GAME MODE\n${p1Text} | ${p2Text}\n(W/UP to Ready, S/DOWN to Unready)`);
+        }
+
+        // --- 5. GAME LOGIC & STATE (Updated Transitions) ---
+        
         function handleColorKeys(key) {
             if (key === 'a' && !p1Ready) {
                 p1ColorIndex = (p1ColorIndex - 1 + colorPalette.length) % colorPalette.length;
@@ -429,7 +613,7 @@
             updateReadyMessage();
 
             if (p1Ready && p2Ready) {
-                proceedToStart();
+                proceedToStart(); // Proceed to start the game (old 'resetRound' logic)
             }
         }
 
@@ -449,70 +633,85 @@
         }
 
         function proceedToStart() {
+            // Update player colors based on selection
             player1.color = colorPalette[p1ColorIndex];
             player2.color = colorPalette[p2ColorIndex];
-            gameState = 'start';
-            showMessage('Click to Start');
+            resetRound(); // Starts the round with the selected mode and colors
         }
 
         function initGame() {
-            player1 = new Player(80, canvas.height / 2, 0, colorPalette[p1ColorIndex], {
-                up: 'w', down: 's', left: 'a', right: 'd'
-            });
-            player2 = new Player(canvas.width - 80, canvas.height / 2, Math.PI, colorPalette[p2ColorIndex], {
-                up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight'
-            });
+            // Initial setup and score resets
+            player1 = new Player(P1_HOME_X, canvas.height / 2, 0, colorPalette[p1ColorIndex], { up: 'w', down: 's', left: 'a', right: 'd' }, true);
+            player2 = new Player(P2_HOME_X, canvas.height / 2, Math.PI, colorPalette[p2ColorIndex], { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }, false);
             
             player1.score = 0;
             player2.score = 0;
             updateScoreUI();
             
-            // --- NEW: Reset arena index on new game ---
             currentArenaIndex = 0;
+            gameModeEl.textContent = "";
+            ctfTimerEl.style.display = 'none';
             
-            gameState = 'colorSelect';
+            // Start at Mode Selection
+            gameState = 'modeSelect'; // NEW initial state
             p1Ready = false;
             p2Ready = false;
-            updateColorUI();
-            updateReadyMessage();
-            arenaNameEl.textContent = ""; // Clear arena name
+            p1ModeIndex = 0; // Reset mode selection
+            p2ModeIndex = 0;
+            updateModeMessage();
+            arenaNameEl.textContent = "";
         }
         
         function resetRound() {
+            // No more cycling modes, just set the selected mode
+            gameModeEl.textContent = gameMode;
+            
             trails = [];
             particles = [];
             roundTimer = 0;
             isSuddenDeath = false;
             
-            // --- NEW: Cycle to the next arena ---
-            // (Only increment *after* a round is played, not on game init)
-            if (gameState !== 'colorSelect') {
+            if (gameMode === 'CTF MODE') {
+                ctfRoundTimer = CTF_ROUND_TIME;
+                p1RoundScore = 0;
+                p2RoundScore = 0;
+                p1Flag = new Flag(P1_HOME_X, canvas.height / 2, player1.color, true);
+                p2Flag = new Flag(P2_HOME_X, canvas.height / 2, player2.color, false);
+                ctfTimerEl.style.display = 'block';
+            } else {
+                p1Flag = null;
+                p2Flag = null;
+                ctfTimerEl.style.display = 'none';
+            }
+
+            if (gameState !== 'colorSelect' && gameState !== 'start' && gameState !== 'modeSelect') {
                 currentArenaIndex = (currentArenaIndex + 1) % arenas.length;
             }
             currentArena = arenas[currentArenaIndex];
-            arenaNameEl.textContent = currentArena.name; // Show arena name
+            arenaNameEl.textContent = currentArena.name;
             
-            player1.x = 80;
+            player1.x = P1_HOME_X;
             player1.y = canvas.height / 2;
             player1.angle = 0;
             player1.isDead = false;
             player1.boostCooldownTimer = BOOST_COOLDOWN;
             player1.immunityTimer = SPAWN_IMMUNITY_TIME;
+            player1.carryingFlag = null;
 
-            player2.x = canvas.width - 80;
+            player2.x = P2_HOME_X;
             player2.y = canvas.height / 2;
             player2.angle = Math.PI;
             player2.isDead = false;
             player2.boostCooldownTimer = BOOST_COOLDOWN;
             player2.immunityTimer = SPAWN_IMMUNITY_TIME;
+            player2.carryingFlag = null;
             
             startCountdown();
         }
 
         function startCountdown() {
             gameState = 'countdown';
-            // --- NEW: Clear arena name after a moment ---
-            setTimeout(() => { arenaNameEl.textContent = ""; }, 2000); 
+            setTimeout(() => { arenaNameEl.textContent = ""; gameModeEl.textContent = gameMode; }, 2000); 
             
             let count = 3;
             showMessage(count);
@@ -531,22 +730,49 @@
             }, 1000);
         }
 
-        function handleRoundOver() {
+        function handleRoundOver(winner = null, reason = 'crash') {
             gameState = 'roundOver';
-            if (player1.isDead && player2.isDead) {
-                showMessage('DRAW');
-            } else if (player1.isDead) {
-                player2.score++;
-                showMessage('PLAYER 2 WINS ROUND');
-            } else if (player2.isDead) {
-                player1.score++;
-                showMessage('PLAYER 1 WINS ROUND');
+            
+            let message = '';
+            if (gameMode === 'DEATHMATCH') {
+                if (player1.isDead && player2.isDead) {
+                    message = 'DRAW';
+                } else if (player1.isDead) {
+                    player2.score++;
+                    message = 'PLAYER 2 WINS ROUND';
+                } else if (player2.isDead) {
+                    player1.score++;
+                    message = 'PLAYER 1 WINS ROUND';
+                }
+            } else if (gameMode === 'CTF MODE') {
+                if (reason === 'timer') {
+                    if (p1RoundScore > p2RoundScore) {
+                        player1.score++;
+                        message = `PLAYER 1 WINS! (${p1RoundScore}-${p2RoundScore})`;
+                    } else if (p2RoundScore > p1RoundScore) {
+                        player2.score++;
+                        message = `PLAYER 2 WINS! (${p1RoundScore}-${p2RoundScore})`;
+                    } else {
+                        message = 'CTF TIME UP: TIE!';
+                    }
+                } else if (reason === 'crash') {
+                    if (player1.isDead && player2.isDead) {
+                         message = 'DRAW (BOTH CRASHED)';
+                    } else if (player1.isDead) {
+                        message = 'PLAYER 1 CRASHED! (FLAG DROPPED)';
+                    } else if (player2.isDead) {
+                        message = 'PLAYER 2 CRASHED! (FLAG DROPPED)';
+                    }
+                }
             }
+            
+            showMessage(message);
             updateScoreUI();
+            
             if (player1.score >= WIN_SCORE || player2.score >= WIN_SCORE) {
                 gameState = 'gameOver';
-                let winner = player1.score > player2.score ? 'PLAYER 1' : 'PLAYER 2';
-                showMessage(`${winner} WINS!\n(Click to Restart)`);
+                let overallWinner = player1.score > player2.score ? 'PLAYER 1' : 'PLAYER 2';
+                showMessage(`${overallWinner} WINS!\n(Click to Restart)`);
             } else {
                 setTimeout(resetRound, 3000);
             }
@@ -566,15 +792,14 @@
             messageEl.style.display = 'none';
         }
         
-        // --- NEW: Draw the arena obstacles ---
         function drawArena() {
-            ctx.fillStyle = '#888'; // Obstacle color
+            ctx.fillStyle = '#888';
             ctx.shadowColor = '#fff';
             ctx.shadowBlur = 10;
             for (let obs of currentArena.obstacles) {
                 ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
             }
-            ctx.shadowBlur = 0; // Reset shadow
+            ctx.shadowBlur = 0;
         }
 
         // --- 6. MAIN GAME LOOP ---
@@ -582,51 +807,48 @@
             ctx.fillStyle = 'rgba(10, 10, 10, 0.8)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // --- NEW: Draw arena first ---
             drawArena();
             
             if (gameState === 'playing') {
                 player1.update();
                 player2.update();
 
-                if (!isSuddenDeath) { 
-                    roundTimer++;
-                    if (roundTimer > SUDDEN_DEATH_TIME) {
-                        isSuddenDeath = true;
-                        showMessage('SUDDEN DEATH');
-                        setTimeout(() => {
-                            if (gameState === 'playing') hideMessage();
-                        }, 2000); 
+                // CTF Timer Logic
+                if (gameMode === 'CTF MODE') {
+                    ctfRoundTimer--;
+                    const seconds = Math.ceil(ctfRoundTimer / 60);
+                    const minutes = Math.floor(seconds / 60);
+                    const displaySeconds = seconds % 60;
+                    ctfTimerEl.textContent = `TIME: ${minutes}:${displaySeconds < 10 ? '0' : ''}${displaySeconds} (P1: ${p1RoundScore} | P2: ${p2RoundScore})`;
+
+                    if (ctfRoundTimer <= 0) {
+                        handleRoundOver(null, 'timer');
+                    }
+                } else if (gameMode === 'DEATHMATCH') {
+                    // Deathmatch Sudden Death Logic
+                    if (!isSuddenDeath) { 
+                        roundTimer++;
+                        if (roundTimer > SUDDEN_DEATH_TIME) {
+                            isSuddenDeath = true;
+                            showMessage('SUDDEN DEATH');
+                            setTimeout(() => {
+                                if (gameState === 'playing') hideMessage();
+                            }, 2000); 
+                        }
                     }
                 }
             }
-
-            if (gameState === 'colorSelect') {
-                ctx.save();
-                ctx.fillStyle = colorPalette[p1ColorIndex];
-                ctx.shadowColor = colorPalette[p1ColorIndex];
-                ctx.shadowBlur = 10;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width / 4, 100);
-                ctx.lineTo(canvas.width / 4 - 10, 110);
-                ctx.lineTo(canvas.width / 4 - 10, 90);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
-
-                ctx.save();
-                ctx.fillStyle = colorPalette[p2ColorIndex];
-                ctx.shadowColor = colorPalette[p2ColorIndex];
-                ctx.shadowBlur = 10;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width * 0.75, 100);
-                ctx.lineTo(canvas.width * 0.75 + 10, 110);
-                ctx.lineTo(canvas.width * 0.75 + 10, 90);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
+            
+            // Check for death and handle round end
+            if (gameState === 'playing' && (player1.isDead || player2.isDead)) {
+                if (gameMode === 'CTF MODE' && player1.isDead && player2.isDead) {
+                     handleRoundOver(null, 'crash'); 
+                } else if (gameMode === 'DEATHMATCH') {
+                    handleRoundOver();
+                }
             }
 
+            // Draw Trails, Particles, and Players
             for (let i = trails.length - 1; i >= 0; i--) {
                 trails[i].update();
                 if (trails[i].lifetime <= 0) { trails.splice(i, 1); }
@@ -636,12 +858,13 @@
                 if (particles[i].lifetime <= 0) { particles.splice(i, 1); }
             }
 
-            if (gameState === 'playing' && (player1.isDead || player2.isDead)) {
-                handleRoundOver();
-            }
-
             for (let segment of trails) { segment.draw(); }
-            if (gameState === 'playing') {
+            
+            // Draw Flags
+            if (p1Flag) p1Flag.draw();
+            if (p2Flag) p2Flag.draw();
+            
+            if (gameState === 'playing' || gameState === 'countdown') {
                 player1.draw();
                 player2.draw();
             }
