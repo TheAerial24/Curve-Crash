@@ -149,10 +149,12 @@
         const DM_TRAIL_LIFETIME = 8 * FPS;      // 8 seconds (default)
 
         const FLAG_RADIUS = 10;
-        const P1_HOME_X = 80;
-        const P2_HOME_X = 640 - 80;
-        const FLAG_SPAWN_OFFSET_X = -25; 
-        const FLAG_SPAWN_OFFSET_Y = 15;  
+        const P1_START_X = 80;
+        const P2_START_X = 640 - 80;
+        
+        // --- Flag Spawn Offset (Behind and slightly below player start) ---
+        const FLAG_OFFSET_X = 25; 
+        const FLAG_OFFSET_Y = 20;  
         
         let TRAIL_LIFETIME = DM_TRAIL_LIFETIME; 
 
@@ -171,7 +173,7 @@
         let p1Ready = false;
         let p2Ready = false;
 
-        let gameState = 'start'; // States: 'start', 'modeSelect', 'colorSelect', 'countdown', 'playing', 'roundOver', 'gameOver'
+        let gameState = 'start'; 
         let trails = [];
         let particles = [];
         let keys = {};
@@ -185,16 +187,15 @@
         
         // --- CONSOLIDATED ARENAS ---
         const arenas = [
-            { name: "The Classic", mode: 'DEATHMATCH', index: 0, obstacles: [], wrapWalls: false },
-            { name: "The Pillars", mode: 'CTF MODE', index: 1, obstacles: [ { x: 200, y: 100, width: 40, height: 200 }, { x: 400, y: 100, width: 40, height: 200 } ], wrapWalls: false }
+            { name: "The Classic", mode: 'DEATHMATCH', obstacles: [], wrapWalls: false },
+            { name: "The Pillars", mode: 'CTF MODE', obstacles: [ { x: 200, y: 100, width: 40, height: 200 }, { x: 400, y: 100, width: 40, height: 200 } ], wrapWalls: false }
         ];
         
-        // Helper function to get the correct arena based on mode
         function getArenaByMode(mode) {
             return arenas.find(a => a.mode === mode);
         }
 
-        let currentArena = getArenaByMode('CTF MODE'); // Initial default
+        let currentArena = getArenaByMode('CTF MODE'); 
 
         // --- 2. INPUT HANDLING ---
 
@@ -279,7 +280,6 @@
                 const moveX = Math.cos(this.angle) * this.speed;
                 const moveY = Math.sin(this.angle) * this.speed;
                 
-                // --- FIX: Ensure the trail uses the player's selected color ---
                 trails.push(new TrailSegment(this.x, this.y, this.color));
 
                 this.x += moveX;
@@ -313,7 +313,10 @@
                 }
                 
                 if (this.carryingFlag && this.carryingFlag.isP1 !== this.isP1) {
-                    if (Math.abs(this.x - this.homeX) < 60) {
+                    // Check if player is near their HOME flag spawn point (x-position)
+                    const homeFlagSpawnX = this.isP1 ? P1_START_X - FLAG_OFFSET_X : P2_START_X + FLAG_OFFSET_X;
+                    
+                    if (Math.abs(this.x - homeFlagSpawnX) < 30) {
                         this.isP1 ? p1RoundScore++ : p2RoundScore++;
                         
                         this.carryingFlag.isCarried = false;
@@ -338,14 +341,12 @@
 
             checkWallCollision() {
                 if (this.immunityTimer > 0) return;
-                // Wall wrapping is only for The Open map (which is removed, but keeping logic just in case it returns)
                 if (currentArena.wrapWalls) {
                     if (this.x < 0) this.x = canvas.width;
                     if (this.x > canvas.width) this.x = 0;
                     if (this.y < 0) this.y = canvas.height;
                     if (this.y > canvas.height) this.y = 0;
                 } else {
-                    // Standard boundaries (Classic and Pillars)
                     if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
                         this.die();
                     }
@@ -373,7 +374,6 @@
                 const collisionThreshold = playerRadius + trailRadius;
 
                 for (let segment of trails) {
-                    // Prevent self-collision immediately after spawning/turning
                     if (segment.color === this.color && segment.lifetime > TRAIL_LIFETIME - 15) {
                         continue;
                     }
@@ -393,6 +393,14 @@
                 
                 if (gameMode === 'CTF MODE') {
                     this.respawnTimer = CTF_RESPAWN_TIME;
+                    
+                    // --- NEW FIX: Clear player's trail on death in CTF ---
+                    for (let i = trails.length - 1; i >= 0; i--) {
+                        if (trails[i].color === this.color) {
+                            trails.splice(i, 1);
+                        }
+                    }
+
                 } else { // DEATHMATCH
                     handleDeathmatchRoundEnd(this.isP1 ? player2 : player1); 
                 }
@@ -463,16 +471,20 @@
             }
         }
         
-        // --- 4. FLAG & TRAIL CLASSES (Updated Trail Segment) ---
+        // --- 4. FLAG & TRAIL CLASSES ---
         class Flag {
-            constructor(x, y, color, isP1Flag) {
+            // Updated constructor to calculate initial position based on player start and offset
+            constructor(playerStartX, playerStartY, color, isP1Flag) {
                 let initialX, initialY;
+                
+                // P1 starts facing right (angle 0), so flag is to the left (behind)
                 if (isP1Flag) {
-                    initialX = x + FLAG_SPAWN_OFFSET_X; 
-                    initialY = y + FLAG_SPAWN_OFFSET_Y;
+                    initialX = playerStartX - FLAG_OFFSET_X; 
+                    initialY = playerStartY + FLAG_OFFSET_Y;
                 } else {
-                    initialX = x - FLAG_SPAWN_OFFSET_X;
-                    initialY = y + FLAG_SPAWN_OFFSET_Y;
+                    // P2 starts facing left (angle PI), so flag is to the right (behind)
+                    initialX = playerStartX + FLAG_OFFSET_X;
+                    initialY = playerStartY + FLAG_OFFSET_Y;
                 }
                 
                 this.initialX = initialX;
@@ -500,12 +512,14 @@
                 ctx.shadowColor = this.color;
                 ctx.shadowBlur = 15;
 
+                // Draw Flagpole
                 ctx.fillRect(this.x - 1, this.y, 2, 20);
                 
+                // Draw Flag Shape
                 ctx.beginPath();
                 ctx.moveTo(this.x, this.y);
                 
-                const direction = this.isP1 ? 1 : -1;
+                const direction = this.isP1 ? 1 : -1; // P1 flag points right, P2 flag points left
                 ctx.lineTo(this.x + FLAG_RADIUS * 2 * direction, this.y + FLAG_RADIUS);
                 ctx.lineTo(this.x, this.y + FLAG_RADIUS);
                 ctx.closePath();
@@ -534,7 +548,7 @@
             constructor(x, y, color) {
                 this.x = x;
                 this.y = y;
-                this.color = color; // Fix: Store the color here
+                this.color = color; 
                 this.lifetime = TRAIL_LIFETIME; 
             }
             update() { 
@@ -542,7 +556,7 @@
             }
             draw() {
                 const alpha = this.lifetime / TRAIL_LIFETIME;
-                ctx.fillStyle = this.color; // Fix: Use the stored color
+                ctx.fillStyle = this.color; 
                 ctx.globalAlpha = alpha;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, TRAIL_WIDTH / 2, 0, Math.PI * 2);
@@ -610,7 +624,6 @@
                 p1Ready = false; 
                 p2Ready = false;
                 
-                // Set the correct arena for the mode before moving to color select
                 currentArena = getArenaByMode(gameMode);
                 
                 updateReadyMessage(); 
@@ -626,7 +639,6 @@
                 message += "\nMODE MISMATCH!";
             }
             showMessage(message);
-            // Display map name based on P1's current mode selection
             const tempArena = getArenaByMode(MODES[p1ModeIndex]);
             arenaNameEl.textContent = `Arena: ${tempArena.name}`;
         }
@@ -691,8 +703,8 @@
         }
 
         function initGame() {
-            player1 = new Player(P1_HOME_X, canvas.height / 2, 0, colorPalette[p1ColorIndex], { up: 'w', down: 's', left: 'a', right: 'd' }, true, P1_HOME_X);
-            player2 = new Player(P2_HOME_X, canvas.height / 2, Math.PI, colorPalette[p2ColorIndex], { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }, false, P2_HOME_X);
+            player1 = new Player(P1_START_X, canvas.height / 2, 0, colorPalette[p1ColorIndex], { up: 'w', down: 's', left: 'a', right: 'd' }, true, P1_START_X);
+            player2 = new Player(P2_START_X, canvas.height / 2, Math.PI, colorPalette[p2ColorIndex], { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }, false, P2_START_X);
             
             player1.score = 0;
             player2.score = 0;
@@ -700,7 +712,7 @@
             p2RoundScore = 0;
             updateScoreUI();
             
-            currentArena = getArenaByMode('CTF MODE'); // Initial selection for start screen display
+            currentArena = getArenaByMode('CTF MODE'); 
             gameMode = MODES[0]; 
             
             gameState = 'start'; 
@@ -719,14 +731,14 @@
             p2Flag = null; 
             ctfTimerEl.style.display = 'none';
 
-            // --- MODE-SPECIFIC SETUP ---
-            currentArena = getArenaByMode(gameMode); // Load the specific arena for the selected mode
+            currentArena = getArenaByMode(gameMode); 
 
             if (gameMode === 'CTF MODE') {
                 TRAIL_LIFETIME = CTF_TRAIL_LIFETIME; 
                 ctfRoundTimer = CTF_ROUND_TIME;
-                p1Flag = new Flag(P1_HOME_X, canvas.height / 2, player1.color, true);
-                p2Flag = new Flag(P2_HOME_X, canvas.height / 2, player2.color, false);
+                // --- Flag Instantiation (Uses Px_START_X as 'home') ---
+                p1Flag = new Flag(P1_START_X, canvas.height / 2, player1.color, true);
+                p2Flag = new Flag(P2_START_X, canvas.height / 2, player2.color, false);
                 ctfTimerEl.style.display = 'block';
             } else { // DEATHMATCH
                 TRAIL_LIFETIME = DM_TRAIL_LIFETIME; 
@@ -756,9 +768,9 @@
                 showMessage("DRAW! (Double Kill)");
             }
             
-            // In the two-map setup, Deathmatch always uses "The Classic"
-            // We just need to ensure the map is re-selected in startGame(), no rotation needed now.
-            
+            // Clear all trails at the end of a Deathmatch round
+            trails = [];
+
             setTimeout(() => {
                 startGame(); 
             }, 2000); 
@@ -767,7 +779,6 @@
 
         function startCountdown() {
             gameState = 'countdown';
-            // Show the arena name
             showMessage(`ARENA: ${currentArena.name}`);
             
             setTimeout(() => { 
@@ -777,7 +788,6 @@
             }, 1500); 
             
             let count = 3;
-            // Delay countdown start slightly to let the map message show
             setTimeout(() => {
                 showMessage(count);
                 const timer = setInterval(() => {
@@ -819,7 +829,7 @@
             if (gameMode === 'CTF MODE') {
                 p1ScoreEl.textContent = p1RoundScore;
                 p2ScoreEl.textContent = p2RoundScore;
-            } else { // DEATHMATCH
+            } else { 
                 p1ScoreEl.textContent = player1.score;
                 p2ScoreEl.textContent = player2.score;
             }
@@ -846,7 +856,6 @@
 
         // --- 7. MAIN GAME LOOP ---
         function gameLoop() {
-            // Keep trails alive visually for a few extra frames during roundOver
             const opacity = (gameState === 'roundOver') ? 0.3 : 0.8;
             ctx.fillStyle = `rgba(10, 10, 10, ${opacity})`;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -870,7 +879,6 @@
                 }
             }
             
-            // Trail and Particle update/draw regardless of game state (except gameOver)
             for (let i = trails.length - 1; i >= 0; i--) {
                 trails[i].update();
                 if (trails[i].lifetime <= 0) { trails.splice(i, 1); }
@@ -887,7 +895,6 @@
                 p2Flag.draw();
             }
             
-            // Only draw players if not in the middle of a Deathmatch round end screen
             if (gameState !== 'roundOver') {
                 player1.draw();
                 player2.draw();
