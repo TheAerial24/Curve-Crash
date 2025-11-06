@@ -17,7 +17,6 @@
             justify-content: flex-start;
             min-height: 100vh;
             overflow: hidden;
-            /* --- NEW: Make text smaller overall --- */
             font-size: 0.9em;
         }
         
@@ -30,9 +29,8 @@
         #ui {
             display: flex;
             justify-content: space-between;
-            /* --- NEW: Reduced width --- */
             width: 640px;
-            padding: 5px; /* Reduced padding */
+            padding: 5px;
             box-sizing: border-box;
         }
         .player-info { 
@@ -41,11 +39,10 @@
         }
         #p1-info { color: #00ffff; text-align: left; }
         #p2-info { color: #ff00ff; text-align: right; }
-        /* --- NEW: Reduced score size --- */
         .score { font-size: 2.0em; font-weight: bold; }
         .boost-meter {
             width: 100%;
-            height: 8px; /* Reduced height */
+            height: 8px;
             background-color: #333;
             border: 1px solid #555;
             margin-top: 3px;
@@ -59,14 +56,22 @@
         #p2-boost-bar { background-color: #ff00ff; }
         
         #message {
-            /* --- NEW: Reduced font size and width --- */
             font-size: 1.2em;
             text-align: center;
             line-height: 1.4;
             text-shadow: 0 0 10px #fff;
             display: none;
             padding: 5px 0;
-            width: 640px; /* Match new canvas width */
+            width: 640px;
+        }
+        
+        /* --- NEW: Style for the arena name --- */
+        #arena-name {
+            font-size: 1em;
+            color: #888;
+            width: 640px;
+            text-align: center;
+            height: 1.2em;
         }
     </style>
 </head>
@@ -87,6 +92,8 @@
     
     <div id="message"></div>
     
+    <div id="arena-name"></div>
+    
     <canvas id="gameCanvas" width="640" height="400"></canvas>
 
     <script>
@@ -100,6 +107,9 @@
         const p1InfoEl = document.getElementById('p1-info');
         const p2InfoEl = document.getElementById('p2-info');
         const messageEl = document.getElementById('message');
+        
+        // --- NEW ---
+        const arenaNameEl = document.getElementById('arena-name');
 
         const PLAYER_SIZE = 10;
         const PLAYER_SPEED = 2;
@@ -131,6 +141,40 @@
         
         let roundTimer = 0;
         let isSuddenDeath = false;
+        
+        // --- NEW: Arena Definitions ---
+        const arenas = [
+            {
+                name: "The Classic",
+                obstacles: [],
+                wrapWalls: false
+            },
+            {
+                name: "The Pillars",
+                obstacles: [
+                    { x: 200, y: 100, width: 40, height: 200 },
+                    { x: 400, y: 100, width: 40, height: 200 }
+                ],
+                wrapWalls: false
+            },
+            {
+                name: "The Hourglass",
+                obstacles: [
+                    { x: 0, y: 0, width: 220, height: 100 },
+                    { x: 420, y: 0, width: 220, height: 100 },
+                    { x: 0, y: 300, width: 220, height: 100 },
+                    { x: 420, y: 300, width: 220, height: 100 }
+                ],
+                wrapWalls: false
+            },
+            {
+                name: "The Open",
+                obstacles: [],
+                wrapWalls: true
+            }
+        ];
+        let currentArenaIndex = 0;
+        let currentArena = arenas[0];
 
         // --- 2. INPUT HANDLING ---
 
@@ -201,13 +245,42 @@
                 this.x += moveX;
                 this.y += moveY;
                 this.checkWallCollision();
+                // --- NEW ---
+                this.checkObstacleCollision();
                 this.checkTrailCollision();
             }
 
             checkWallCollision() {
                 if (this.immunityTimer > 0) return;
-                if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
-                    this.die();
+
+                // --- NEW: Handle wall wrapping ---
+                if (currentArena.wrapWalls) {
+                    if (this.x < 0) this.x = canvas.width;
+                    if (this.x > canvas.width) this.x = 0;
+                    if (this.y < 0) this.y = canvas.height;
+                    if (this.y > canvas.height) this.y = 0;
+                } else {
+                    // Normal wall collision
+                    if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                        this.die();
+                    }
+                }
+            }
+
+            // --- NEW: Obstacle Collision ---
+            checkObstacleCollision() {
+                if (this.immunityTimer > 0) return;
+
+                const playerRadius = PLAYER_SIZE / 2;
+                for (let obs of currentArena.obstacles) {
+                    // Simple AABB collision check
+                    if (this.x + playerRadius > obs.x &&
+                        this.x - playerRadius < obs.x + obs.width &&
+                        this.y + playerRadius > obs.y &&
+                        this.y - playerRadius < obs.y + obs.height) {
+                        this.die();
+                        break;
+                    }
                 }
             }
 
@@ -383,7 +456,6 @@
         }
 
         function initGame() {
-            // --- NEW: Adjusted starting positions ---
             player1 = new Player(80, canvas.height / 2, 0, colorPalette[p1ColorIndex], {
                 up: 'w', down: 's', left: 'a', right: 'd'
             });
@@ -395,11 +467,15 @@
             player2.score = 0;
             updateScoreUI();
             
+            // --- NEW: Reset arena index on new game ---
+            currentArenaIndex = 0;
+            
             gameState = 'colorSelect';
             p1Ready = false;
             p2Ready = false;
             updateColorUI();
             updateReadyMessage();
+            arenaNameEl.textContent = ""; // Clear arena name
         }
         
         function resetRound() {
@@ -408,7 +484,14 @@
             roundTimer = 0;
             isSuddenDeath = false;
             
-            // --- NEW: Adjusted starting positions ---
+            // --- NEW: Cycle to the next arena ---
+            // (Only increment *after* a round is played, not on game init)
+            if (gameState !== 'colorSelect') {
+                currentArenaIndex = (currentArenaIndex + 1) % arenas.length;
+            }
+            currentArena = arenas[currentArenaIndex];
+            arenaNameEl.textContent = currentArena.name; // Show arena name
+            
             player1.x = 80;
             player1.y = canvas.height / 2;
             player1.angle = 0;
@@ -428,6 +511,9 @@
 
         function startCountdown() {
             gameState = 'countdown';
+            // --- NEW: Clear arena name after a moment ---
+            setTimeout(() => { arenaNameEl.textContent = ""; }, 2000); 
+            
             let count = 3;
             showMessage(count);
             const timer = setInterval(() => {
@@ -479,11 +565,25 @@
         function hideMessage() {
             messageEl.style.display = 'none';
         }
+        
+        // --- NEW: Draw the arena obstacles ---
+        function drawArena() {
+            ctx.fillStyle = '#888'; // Obstacle color
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = 10;
+            for (let obs of currentArena.obstacles) {
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            }
+            ctx.shadowBlur = 0; // Reset shadow
+        }
 
         // --- 6. MAIN GAME LOOP ---
         function gameLoop() {
             ctx.fillStyle = 'rgba(10, 10, 10, 0.8)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // --- NEW: Draw arena first ---
+            drawArena();
             
             if (gameState === 'playing') {
                 player1.update();
@@ -502,7 +602,6 @@
             }
 
             if (gameState === 'colorSelect') {
-                // --- NEW: Adjusted Y position for bikes ---
                 ctx.save();
                 ctx.fillStyle = colorPalette[p1ColorIndex];
                 ctx.shadowColor = colorPalette[p1ColorIndex];
