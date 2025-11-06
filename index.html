@@ -93,7 +93,6 @@
         const p2ScoreEl = document.getElementById('p2-score');
         const p1BoostEl = document.getElementById('p1-boost-bar');
         const p2BoostEl = document.getElementById('p2-boost-bar');
-        const messageEl = document.getElementById('message');
         const p1InfoEl = document.getElementById('p1-info');
         const p2InfoEl = document.getElementById('p2-info');
 
@@ -108,11 +107,8 @@
         const TRAIL_WIDTH = 4;
         const WIN_SCORE = 7;
         const SPAWN_IMMUNITY_TIME = 60;
+        const SUDDEN_DEATH_TIME = 45 * 60;
 
-        // --- NEW: Sudden Death ---
-        const SUDDEN_DEATH_TIME = 45 * 60; // 45 seconds
-
-        // --- Color Selection ---
         const colorPalette = [
             '#00ffff', '#ff00ff', '#00ff00', '#ffff00', '#ff8000',
             '#ffffff', '#ff0000', '#0080ff', '#8000ff', '#008000'
@@ -122,14 +118,12 @@
         let p1Ready = false;
         let p2Ready = false;
 
-        // --- Game State ---
         let gameState = 'start';
         let trails = [];
         let particles = [];
         let keys = {};
         let player1, player2;
         
-        // --- NEW: Sudden Death State ---
         let roundTimer = 0;
         let isSuddenDeath = false;
 
@@ -279,7 +273,6 @@
                 this.lifetime = TRAIL_LIFETIME;
             }
             update() { 
-                // --- NEW: Sudden Death stops trails from fading ---
                 if (isSuddenDeath) return;
                 this.lifetime--; 
             }
@@ -406,8 +399,6 @@
         function resetRound() {
             trails = [];
             particles = [];
-
-            // --- NEW: Reset Sudden Death state ---
             roundTimer = 0;
             isSuddenDeath = false;
             
@@ -470,7 +461,9 @@
         
         function updateScoreUI() {
             p1ScoreEl.textContent = player1.score;
-            p2ScoreEl.textContent = p2ScoreEl.score;
+            // --- THIS IS THE FIX ---
+            // It now correctly references the player2 object
+            p2ScoreEl.textContent = player2.score;
         }
 
         function showMessage(text) {
@@ -491,13 +484,11 @@
                 player1.update();
                 player2.update();
 
-                // --- NEW: Sudden Death Timer ---
                 if (!isSuddenDeath) { 
                     roundTimer++;
                     if (roundTimer > SUDDEN_DEATH_TIME) {
                         isSuddenDeath = true;
                         showMessage('SUDDEN DEATH');
-                        // Hide message after 2s, but mode stays active
                         setTimeout(() => {
                             if (gameState === 'playing') hideMessage();
                         }, 2000); 
