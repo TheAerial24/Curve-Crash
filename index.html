@@ -54,17 +54,17 @@
         }
         #p1-boost-bar { background-color: #00ffff; }
         #p2-boost-bar { background-color: #ff00ff; }
+        
+        /* --- THIS IS THE CSS FIX --- */
+        /* All absolute positioning is removed. */
         #message {
-            position: absolute;
-            top: 40%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 2.5em;
+            font-size: 1.5em; /* Made it smaller to fit */
             text-align: center;
             line-height: 1.4;
             text-shadow: 0 0 10px #fff;
-            display: none;
-            pointer-events: none;
+            display: none; /* Still hidden by default */
+            padding: 10px 0; /* Add some spacing */
+            width: 800px; /* Match the canvas width */
         }
     </style>
 </head>
@@ -82,8 +82,10 @@
             <div class="boost-meter"><div class="boost-bar" id="p2-boost-bar"></div></div>
         </div>
     </div>
-    <canvas id="gameCanvas" width="800" height="500"></canvas>
+
     <div id="message"></div>
+    
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
 
     <script>
         // --- 1. SETUP & CONSTANTS ---
@@ -95,6 +97,7 @@
         const p2BoostEl = document.getElementById('p2-boost-bar');
         const p1InfoEl = document.getElementById('p1-info');
         const p2InfoEl = document.getElementById('p2-info');
+        const messageEl = document.getElementById('message');
 
         const PLAYER_SIZE = 10;
         const PLAYER_SPEED = 2;
@@ -461,8 +464,6 @@
         
         function updateScoreUI() {
             p1ScoreEl.textContent = player1.score;
-            // --- THIS IS THE FIX ---
-            // It now correctly references the player2 object
             p2ScoreEl.textContent = player2.score;
         }
 
@@ -497,14 +498,15 @@
             }
 
             if (gameState === 'colorSelect') {
+                // The message is now visible, but we can still draw the bikes
                 ctx.save();
                 ctx.fillStyle = colorPalette[p1ColorIndex];
                 ctx.shadowColor = colorPalette[p1ColorIndex];
                 ctx.shadowBlur = 10;
                 ctx.beginPath();
-                ctx.moveTo(canvas.width / 4, canvas.height / 2 + 50);
-                ctx.lineTo(canvas.width / 4 - 10, canvas.height / 2 + 60);
-                ctx.lineTo(canvas.width / 4 - 10, canvas.height / 2 + 40);
+                ctx.moveTo(canvas.width / 4, 150); // Adjusted Y position
+                ctx.lineTo(canvas.width / 4 - 10, 160);
+                ctx.lineTo(canvas.width / 4 - 10, 140);
                 ctx.closePath();
                 ctx.fill();
                 ctx.restore();
@@ -514,9 +516,9 @@
                 ctx.shadowColor = colorPalette[p2ColorIndex];
                 ctx.shadowBlur = 10;
                 ctx.beginPath();
-                ctx.moveTo(canvas.width * 0.75, canvas.height / 2 + 50);
-                ctx.lineTo(canvas.width * 0.75 + 10, canvas.height / 2 + 60);
-                ctx.lineTo(canvas.width * 0.75 + 10, canvas.height / 2 + 40);
+                ctx.moveTo(canvas.width * 0.75, 150); // Adjusted Y position
+                ctx.lineTo(canvas.width * 0.75 + 10, 160);
+                ctx.lineTo(canvas.width * 0.75 + 10, 140);
                 ctx.closePath();
                 ctx.fill();
                 ctx.restore();
