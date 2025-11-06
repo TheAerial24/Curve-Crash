@@ -18,6 +18,7 @@
             min-height: 100vh;
             overflow: hidden;
         }
+        /* H1 style is still here, but the H1 element is gone */
         h1 {
             font-weight: 300;
             letter-spacing: 4px;
@@ -27,7 +28,6 @@
             background-color: #0a0a0a;
             border: 1px solid #333;
             filter: drop-shadow(0 0 10px #555);
-            /* --- FIX 1: Add cursor pointer --- */
             cursor: pointer;
         }
         #ui {
@@ -35,6 +35,7 @@
             justify-content: space-between;
             width: 800px;
             padding: 10px;
+            padding-top: 20px; /* Added a little space */
             box-sizing: border-box;
         }
         .player-info { flex-basis: 45%; }
@@ -64,13 +65,11 @@
             text-align: center;
             text-shadow: 0 0 10px #fff;
             display: none;
-            /* Clicks shouldn't be blocked by the message */
             pointer-events: none;
         }
     </style>
 </head>
 <body>
-    <h1>CURVE-CRASH</h1>
     <div id="ui">
         <div id="p1-info" class="player-info">
             <div class="score" id="p1-score">0</div>
@@ -126,7 +125,6 @@
             keys[e.key] = false;
         });
 
-        // --- FIX 2: Add a CLICK listener ---
         canvas.addEventListener('click', () => {
             if (gameState === 'start') {
                 startCountdown();
@@ -293,7 +291,6 @@
             player2.score = 0;
             updateScoreUI();
             gameState = 'start';
-            // --- FIX 3: Update message ---
             showMessage(`Click to Start`);
         }
         
@@ -347,7 +344,6 @@
             if (player1.score >= WIN_SCORE || player2.score >= WIN_SCORE) {
                 gameState = 'gameOver';
                 let winner = player1.score > player2.score ? 'PLAYER 1' : 'PLAYER 2';
-                // --- FIX 4: Update message ---
                 showMessage(`${winner} WINS!\n(Click to Restart)`);
             } else {
                 setTimeout(resetRound, 3000);
@@ -373,9 +369,6 @@
             ctx.fillStyle = 'rgba(10, 10, 10, 0.8)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // --- FIX 5: Remove all 'Enter' key logic ---
-            // (The click listener now handles this)
-
             if (gameState === 'playing') {
                 player1.update();
                 player2.update();
