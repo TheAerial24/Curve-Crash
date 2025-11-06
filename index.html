@@ -33,7 +33,12 @@
             padding-top: 20px;
             box-sizing: border-box;
         }
-        .player-info { flex-basis: 45%; }
+        .player-info { 
+            flex-basis: 45%; 
+            /* --- NEW --- */
+            /* We now use transitions for smooth color changes */
+            transition: color 0.2s ease;
+        }
         #p1-info { color: #00ffff; text-align: left; }
         #p2-info { color: #ff00ff; text-align: right; }
         .score { font-size: 2.5em; font-weight: bold; }
@@ -47,7 +52,8 @@
         .boost-bar {
             height: 100%;
             width: 100%;
-            transition: width 0.1s linear;
+            /* --- NEW --- */
+            transition: width 0.1s linear, background-color 0.2s ease;
         }
         #p1-boost-bar { background-color: #00ffff; }
         #p2-boost-bar { background-color: #ff00ff; }
@@ -56,8 +62,9 @@
             top: 40%;
             left: 50%;
             transform: translate(-50%, -50%);
-            font-size: 3em;
+            font-size: 2.5em; /* Smaller to fit instructions */
             text-align: center;
+            line-height: 1.4;
             text-shadow: 0 0 10px #fff;
             display: none;
             pointer-events: none;
@@ -90,6 +97,10 @@
         const p1BoostEl = document.getElementById('p1-boost-bar');
         const p2BoostEl = document.getElementById('p2-boost-bar');
         const messageEl = document.getElementById('message');
+        
+        // --- NEW: UI Elements for Color ---
+        const p1InfoEl = document.getElementById('p1-info');
+        const p2InfoEl = document.getElementById('p2-info');
 
         const PLAYER_SIZE = 10;
         const PLAYER_SPEED = 2;
@@ -101,7 +112,25 @@
         const TRAIL_LIFETIME = 8 * 60;
         const TRAIL_WIDTH = 4;
         const WIN_SCORE = 7;
-        const SPAWN_IMMUNITY_TIME = 60; // 1 second * 60fps
+        const SPAWN_IMMUNITY_TIME = 60;
+
+        // --- NEW: Color Selection ---
+        const colorPalette = [
+            '#00ffff', // 0: Cyan
+            '#ff00ff', // 1: Magenta
+            '#00ff00', // 2: Lime
+            '#ffff00', // 3: Yellow
+            '#ff8000', // 4: Orange
+            '#ffffff', // 5: White
+            '#ff0000', // 6: Red
+            '#0080ff', // 7: Blue
+            '#8000ff', // 8: Purple
+            '#008000'  // 9: Green
+        ];
+        let p1ColorIndex = 0;
+        let p2ColorIndex = 1;
+        let p1Ready = false;
+        let p2Ready = false;
 
         let gameState = 'start';
         let trails = [];
@@ -112,9 +141,15 @@
         // --- 2. INPUT HANDLING ---
 
         window.addEventListener('keydown', (e) => {
-            if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.key)) {
+            if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "a", "d", "w", "s"].includes(e.key)) {
                 e.preventDefault();
             }
+
+            // --- NEW: Route input based on gameState ---
+            if (gameState === 'colorSelect') {
+                handleColorKeys(e.key);
+            }
+
             keys[e.key] = true;
         });
 
@@ -123,6 +158,7 @@
         });
 
         canvas.addEventListener('click', () => {
+            // Only 'start' state can be clicked
             if (gameState === 'start') {
                 startCountdown();
             } else if (gameState === 'gameOver') {
@@ -136,7 +172,7 @@
                 this.x = x;
                 this.y = y;
                 this.angle = angle;
-                this.color = color;
+                this.color = color; // This will be set from the color choice!
                 this.controls = controls;
                 this.speed = PLAYER_SPEED;
                 this.isBoosting = false;
@@ -145,21 +181,12 @@
                 this.isBraking = false;
                 this.isDead = false;
                 this.score = 0;
-                
-                // --- NEW ---
                 this.immunityTimer = 0;
             }
 
             update() {
                 if (this.isDead) return;
-
-                // --- NEW ---
-                // Count down immunity timer
-                if (this.immunityTimer > 0) {
-                    this.immunityTimer--;
-                }
-
-                // Handle Input
+                if (this.immunityTimer > 0) { this.immunityTimer--; }
                 if (keys[this.controls.left]) { this.angle -= TURN_SPEED; }
                 if (keys[this.controls.right]) { this.angle += TURN_SPEED; }
                 if (keys[this.controls.up] && this.boostCooldownTimer >= BOOST_COOLDOWN) {
@@ -180,51 +207,33 @@
                 
                 const moveX = Math.cos(this.angle) * this.speed;
                 const moveY = Math.sin(this.angle) * this.speed;
-                
-                // Add trail *before* moving
                 trails.push(new TrailSegment(this.x, this.y, this.color));
-
                 this.x += moveX;
                 this.y += moveY;
-
-                // Check for collisions
                 this.checkWallCollision();
                 this.checkTrailCollision();
             }
 
             checkWallCollision() {
-                // --- NEW ---
-                // If immune, do nothing
                 if (this.immunityTimer > 0) return;
-
                 if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
                     this.die();
                 }
             }
 
             checkTrailCollision() {
-                // --- NEW ---
-                // If immune, do nothing
                 if (this.immunityTimer > 0) return;
-
                 const playerRadius = PLAYER_SIZE / 2;
                 const trailRadius = TRAIL_WIDTH / 2;
-                const collisionThreshold = playerRadius + trailRadius; // 7
+                const collisionThreshold = playerRadius + trailRadius;
 
                 for (let segment of trails) {
-                    
-                    // --- THIS IS THE "TAIL IMMUNITY" FIX ---
-                    // If the segment is OURS and it's NEWER than 15 frames, skip it.
-                    // This prevents us from dying on our own tail.
                     if (segment.color === this.color && segment.lifetime > TRAIL_LIFETIME - 15) {
                         continue;
                     }
-                    
                     const dx = this.x - segment.x;
                     const dy = this.y - segment.y;
                     const distance = Math.sqrt(dx * dx + dy * dy);
-
-                    // If we're close enough to *any other* segment, we die.
                     if (distance < collisionThreshold) { 
                         this.die();
                         break;
@@ -242,13 +251,9 @@
 
             draw() {
                 if (this.isDead) return;
-
-                // --- NEW ---
-                // This makes the player blink while immune
                 if (this.immunityTimer > 0 && Math.floor(this.immunityTimer / 6) % 2 === 0) {
-                    return; // Skip drawing this frame to create a blink
+                    return;
                 }
-
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.angle);
@@ -320,19 +325,97 @@
             }
         }
 
+
         // --- 5. GAME LOGIC & STATE ---
+
+        // --- NEW: Color selection functions ---
+        function handleColorKeys(key) {
+            // Player 1 Controls
+            if (key === 'a' && !p1Ready) {
+                p1ColorIndex = (p1ColorIndex - 1 + colorPalette.length) % colorPalette.length;
+                // Avoid picking the same color
+                if (p1ColorIndex === p2ColorIndex) {
+                    p1ColorIndex = (p1ColorIndex - 1 + colorPalette.length) % colorPalette.length;
+                }
+            }
+            if (key === 'd' && !p1Ready) {
+                p1ColorIndex = (p1ColorIndex + 1) % colorPalette.length;
+                if (p1ColorIndex === p2ColorIndex) {
+                    p1ColorIndex = (p1ColorIndex + 1) % colorPalette.length;
+                }
+            }
+            if (key === 'w') { p1Ready = true; }
+            if (key === 's') { p1Ready = false; }
+
+            // Player 2 Controls
+            if (key === 'ArrowLeft' && !p2Ready) {
+                p2ColorIndex = (p2ColorIndex - 1 + colorPalette.length) % colorPalette.length;
+                if (p2ColorIndex === p1ColorIndex) {
+                    p2ColorIndex = (p2ColorIndex - 1 + colorPalette.length) % colorPalette.length;
+                }
+            }
+            if (key === 'ArrowRight' && !p2Ready) {
+                p2ColorIndex = (p2ColorIndex + 1) % colorPalette.length;
+                if (p2ColorIndex === p1ColorIndex) {
+                    p2ColorIndex = (p2ColorIndex + 1) % colorPalette.length;
+                }
+            }
+            if (key === 'ArrowUp') { p2Ready = true; }
+            if (key === 'ArrowDown') { p2Ready = false; }
+
+            updateColorUI();
+            updateReadyMessage();
+
+            if (p1Ready && p2Ready) {
+                proceedToStart();
+            }
+        }
+
+        function updateColorUI() {
+            const p1Color = colorPalette[p1ColorIndex];
+            const p2Color = colorPalette[p2ColorIndex];
+
+            p1InfoEl.style.color = p1Color;
+            p2InfoEl.style.color = p2Color;
+            p1BoostEl.style.backgroundColor = p1Color;
+            p2BoostEl.style.backgroundColor = p2Color;
+        }
+
+        function updateReadyMessage() {
+            let p1Text = p1Ready ? "P1: READY" : "P1: <A/D> Select";
+            let p2Text = p2Ready ? "P2: READY" : "P2: <L/R> Select";
+            showMessage(`CHOOSE COLOR\n${p1Text} | ${p2Text}\n(W/UP to Ready, S/DOWN to Unready)`);
+        }
+
+        function proceedToStart() {
+            // Lock in the colors
+            player1.color = colorPalette[p1ColorIndex];
+            player2.color = colorPalette[p2ColorIndex];
+
+            // Move to next state
+            gameState = 'start';
+            showMessage('Click to Start');
+        }
+
         function initGame() {
-            player1 = new Player(100, canvas.height / 2, 0, '#00ffff', {
+            // Create players with default colors (will be set in color select)
+            player1 = new Player(100, canvas.height / 2, 0, colorPalette[p1ColorIndex], {
                 up: 'w', down: 's', left: 'a', right: 'd'
             });
-            player2 = new Player(canvas.width - 100, canvas.height / 2, Math.PI, '#ff00ff', {
+            player2 = new Player(canvas.width - 100, canvas.height / 2, Math.PI, colorPalette[p2ColorIndex], {
                 up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight'
             });
+            
             player1.score = 0;
             player2.score = 0;
             updateScoreUI();
-            gameState = 'start';
-            showMessage(`Click to Start`);
+            
+            // --- NEW: Start at color select screen ---
+            gameState = 'colorSelect';
+            p1Ready = false;
+            p2Ready = false;
+            updateColorUI();
+            updateReadyMessage();
         }
         
         function resetRound() {
@@ -344,14 +427,14 @@
             player1.angle = 0;
             player1.isDead = false;
             player1.boostCooldownTimer = BOOST_COOLDOWN;
-            player1.immunityTimer = SPAWN_IMMUNITY_TIME; // --- NEW ---
+            player1.immunityTimer = SPAWN_IMMUNITY_TIME;
 
             player2.x = canvas.width - 100;
             player2.y = canvas.height / 2;
             player2.angle = Math.PI;
             player2.isDead = false;
             player2.boostCooldownTimer = BOOST_COOLDOWN;
-            player2.immunityTimer = SPAWN_IMMUNITY_TIME; // --- NEW ---
+            player2.immunityTimer = SPAWN_IMMUNITY_TIME;
             
             startCountdown();
         }
@@ -402,7 +485,7 @@
         }
 
         function showMessage(text) {
-            messageEl.innerHTML = text.toString().replace('\n', '<br>');
+            messageEl.innerHTML = text.toString().replace(/\n/g, '<br>');
             messageEl.style.display = 'block';
         }
 
@@ -420,6 +503,35 @@
                 player2.update();
             }
 
+            // --- NEW: Draw placeholder bikes on color select ---
+            if (gameState === 'colorSelect') {
+                // We can't use player.draw() as it's not 'playing'
+                // But we can draw static representations
+                ctx.save();
+                ctx.fillStyle = colorPalette[p1ColorIndex];
+                ctx.shadowColor = colorPalette[p1ColorIndex];
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(canvas.width / 4, canvas.height / 2 + 50);
+                ctx.lineTo(canvas.width / 4 - 10, canvas.height / 2 + 60);
+                ctx.lineTo(canvas.width / 4 - 10, canvas.height / 2 + 40);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+
+                ctx.save();
+                ctx.fillStyle = colorPalette[p2ColorIndex];
+                ctx.shadowColor = colorPalette[p2ColorIndex];
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(canvas.width * 0.75, canvas.height / 2 + 50);
+                ctx.lineTo(canvas.width * 0.75 + 10, canvas.height / 2 + 60);
+                ctx.lineTo(canvas.width * 0.75 + 10, canvas.height / 2 + 40);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+
             for (let i = trails.length - 1; i >= 0; i--) {
                 trails[i].update();
                 if (trails[i].lifetime <= 0) { trails.splice(i, 1); }
@@ -434,9 +546,13 @@
             }
 
             for (let segment of trails) { segment.draw(); }
-            player1.draw();
-            player2.draw();
+            // Only draw players if actually playing
+            if (gameState === 'playing') {
+                player1.draw();
+                player2.draw();
+            }
             for (let particle of particles) { particle.draw(); }
+            
             player1.drawBoostBar(p1BoostEl);
             player2.drawBoostBar(p2BoostEl);
 
