@@ -305,6 +305,19 @@
                 if (this.isBoosting) {
                     this.boostTimer--;
                     if (this.boostTimer <= 0) { this.isBoosting = false; }
+
+                    // --- NEW GRAPHICS: ADD THRUST PARTICLES ---
+                    // Calculate position behind the player
+                    let backX = this.x - Math.cos(this.angle) * PLAYER_SIZE;
+                    let backY = this.y - Math.sin(this.angle) * PLAYER_SIZE;
+                    // Spawn particle with a short lifetime
+                    let p = new Particle(backX, backY, this.color);
+                    p.lifetime = 20; // Shorter life for thrust
+                    p.vx /= 2; // Slower speed
+                    p.vy /= 2;
+                    particles.push(p);
+                    // --- END NEW GRAPHICS ---
+
                 } else {
                     if (this.boostCooldownTimer < BOOST_COOLDOWN) { this.boostCooldownTimer++; }
                 }
@@ -970,7 +983,7 @@
             gameState = 'gameOver';
             
             let score1 = (gameMode === 'CTF MODE') ? p1RoundScore : player1.score;
-            let score2 = (gameMode ==="CTF MODE") ? p2RoundScore : player2.score;
+            let score2 = (gameMode === 'CTF MODE') ? p2RoundScore : player2.score;
 
             let message = '';
             if (gameMode === 'ZONES') {
@@ -1092,6 +1105,16 @@
             // Update UI
             player1.drawBoostBar(p1BoostEl);
             player2.drawBoostBar(p2BoostEl);
+
+            // --- NEW GRAPHICS: SCANLINE OVERLAY ---
+            // This goes at the VERY end of the game loop, after everything else
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+            ctx.globalAlpha = 0.2;
+            for (let i = 0; i < canvas.height; i += 4) { // Draw a line every 4 pixels
+                ctx.fillRect(0, i, canvas.width, 2); // 2 pixels thick
+            }
+            ctx.globalAlpha = 1.0;
+            // --- END NEW GRAPHICS ---
         }
 
         // --- 8. START GAME ---
