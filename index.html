@@ -142,11 +142,19 @@
         const SPAWN_IMMUNITY_TIME = 60;
         
         // --- MODE-SPECIFIC CONSTANTS ---
-        const CTF_ROUND_TIME = 120 * FPS;       // 2 minutes
-        const CTF_RESPAWN_TIME = 2 * FPS;       // 2 seconds
-        const CTF_TRAIL_LIFETIME = 5 * FPS;     // 5 seconds
+        const CTF_ROUND_TIME = 120 * FPS;      // 2 minutes
+        const CTF_RESPAWN_TIME = 2 * FPS;        // 2 seconds
+        const CTF_TRAIL_LIFETIME = 5 * FPS;      // 5 seconds
         
-        const DM_TRAIL_LIFETIME = 8 * FPS;      // 8 seconds (default)
+        const DM_TRAIL_LIFETIME = 8 * FPS;       // 8 seconds (default)
+
+        // --- ZONES MODE CONSTANTS ---
+        const ZONES_GAME_TIME = 300 * FPS;     // 5 minutes
+        const ZONES_INTERVAL = 15 * FPS;       // 15 seconds
+        const ZONES_START_RADIUS = 150;
+        const ZONES_END_RADIUS = 30;
+        // Total zones in a 5 min game (300s / 15s = 20)
+        const ZONES_MAX_COUNT = (ZONES_GAME_TIME / ZONES_INTERVAL) - 1; 
 
         const FLAG_RADIUS = 10;
         const P1_START_X = 80;
@@ -154,7 +162,7 @@
         
         // --- Flag Spawn Offset (Behind and slightly below player start) ---
         const FLAG_OFFSET_X = 25; 
-        const FLAG_OFFSET_Y = 20;  
+        const FLAG_OFFSET_Y = 20;   
         
         let TRAIL_LIFETIME = DM_TRAIL_LIFETIME; 
 
@@ -164,7 +172,7 @@
         ];
         
         // --- GAME MODE LIST ---
-        const MODES = ['CTF MODE', 'DEATHMATCH']; 
+        const MODES = ['CTF MODE', 'DEATHMATCH', 'ZONES']; 
         let p1ModeIndex = 0; 
         let p2ModeIndex = 0; 
         
@@ -184,11 +192,18 @@
         let ctfRoundTimer = 0;
         let p1RoundScore = 0; 
         let p2RoundScore = 0;
+
+        // --- ZONES GLOBALS ---
+        let zone = null;        // Will hold { x, y, radius }
+        let zoneTimer = 0;      // Counts down from ZONES_INTERVAL
+        let zoneGameTimer = 0;  // Counts down from ZONES_GAME_TIME
+        let zoneCount = 0;      // Tracks how many zones have passed
         
         // --- CONSOLIDATED ARENAS ---
         const arenas = [
             { name: "The Classic", mode: 'DEATHMATCH', obstacles: [], wrapWalls: false },
-            { name: "The Pillars", mode: 'CTF MODE', obstacles: [ { x: 200, y: 100, width: 40, height: 200 }, { x: 400, y: 100, width: 40, height: 200 } ], wrapWalls: false }
+            { name: "The Pillars", mode: 'CTF MODE', obstacles: [ { x: 200, y: 100, width: 40, height: 200 }, { x: 400, y: 100, width: 40, height: 200 } ], wrapWalls: false },
+            { name: "The Arena", mode: 'ZONES', obstacles: [], wrapWalls: false } // NEW
         ];
         
         function getArenaByMode(mode) {
@@ -238,7 +253,7 @@
                 this.boostCooldownTimer = BOOST_COOLDOWN;
                 this.isBraking = false;
                 this.isDead = false;
-                this.score = 0; 
+                this.score = 0; // Used for DM wins and ZONES deaths
                 this.immunityTimer = 0;
                 this.isP1 = isP1;
                 this.carryingFlag = null;
@@ -254,6 +269,8 @@
                             this.respawn();
                         }
                     }
+                    // In ZONES mode, isDead = true just stops the update.
+                    // Respawn is handled by spawnNewZone()
                     return;
                 }
                 
@@ -280,7 +297,10 @@
                 const moveX = Math.cos(this.angle) * this.speed;
                 const moveY = Math.sin(this.angle) * this.speed;
                 
-                trails.push(new TrailSegment(this.x, this.y, this.color));
+                // Only create trails if not in Zones mode
+                if (gameMode !== 'ZONES') {
+                    trails.push(new TrailSegment(this.x, this.y, this.color));
+                }
 
                 this.x += moveX;
                 this.y += moveY;
@@ -369,6 +389,9 @@
 
             checkTrailCollision() {
                 if (this.immunityTimer > 0) return;
+                // No need to check trail collision in ZONES mode
+                if (gameMode === 'ZONES') return; 
+                
                 const playerRadius = PLAYER_SIZE / 2;
                 const trailRadius = TRAIL_WIDTH / 2;
                 const collisionThreshold = playerRadius + trailRadius;
@@ -394,15 +417,18 @@
                 if (gameMode === 'CTF MODE') {
                     this.respawnTimer = CTF_RESPAWN_TIME;
                     
-                    // --- NEW FIX: Clear player's trail on death in CTF ---
+                    // --- Clear player's trail on death in CTF ---
                     for (let i = trails.length - 1; i >= 0; i--) {
                         if (trails[i].color === this.color) {
                             trails.splice(i, 1);
                         }
                     }
-
-                } else { // DEATHMATCH
+                } else if (gameMode === 'DEATHMATCH') {
+                    // DEATHMATCH: End the round
                     handleDeathmatchRoundEnd(this.isP1 ? player2 : player1); 
+                } else if (gameMode === 'ZONES') {
+                    this.score++; // Increment death count
+                    updateScoreUI(); // Update UI immediately
                 }
 
                 for (let i = 0; i < 30; i++) {
@@ -428,7 +454,8 @@
             }
 
             draw() {
-                if (this.isDead && gameMode !== 'CTF MODE') return; 
+                // Don't draw player if they are dead (all modes)
+                if (this.isDead) return; 
                 
                 let draw = true;
                 if (this.immunityTimer > 0 && Math.floor(this.immunityTimer / 6) % 2 === 0) {
@@ -706,10 +733,10 @@
             player1 = new Player(P1_START_X, canvas.height / 2, 0, colorPalette[p1ColorIndex], { up: 'w', down: 's', left: 'a', right: 'd' }, true, P1_START_X);
             player2 = new Player(P2_START_X, canvas.height / 2, Math.PI, colorPalette[p2ColorIndex], { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }, false, P2_START_X);
             
-            player1.score = 0;
-            player2.score = 0;
-            p1RoundScore = 0;
-            p2RoundScore = 0;
+            player1.score = 0; // Resets DM wins / ZONES deaths
+            player2.score = 0; // Resets DM wins / ZONES deaths
+            p1RoundScore = 0; // Resets CTF score
+            p2RoundScore = 0; // Resets CTF score
             updateScoreUI();
             
             currentArena = getArenaByMode('CTF MODE'); 
@@ -722,6 +749,7 @@
             p2ModeIndex = 0;
             showMessage("WELCOME TO CURVE-CRASH\nClick to Select Game Mode"); 
             arenaNameEl.textContent = "";
+            ctfTimerEl.style.display = 'none';
         }
         
         function startGame() {
@@ -736,15 +764,28 @@
             if (gameMode === 'CTF MODE') {
                 TRAIL_LIFETIME = CTF_TRAIL_LIFETIME; 
                 ctfRoundTimer = CTF_ROUND_TIME;
+                p1RoundScore = 0;
+                p2RoundScore = 0;
                 // --- Flag Instantiation (Uses Px_START_X as 'home') ---
                 p1Flag = new Flag(P1_START_X, canvas.height / 2, player1.color, true);
                 p2Flag = new Flag(P2_START_X, canvas.height / 2, player2.color, false);
                 ctfTimerEl.style.display = 'block';
-            } else { // DEATHMATCH
+            } else if (gameMode === 'DEATHMATCH') {
                 TRAIL_LIFETIME = DM_TRAIL_LIFETIME; 
-                p1RoundScore = 0; 
-                p2RoundScore = 0;
+            } else if (gameMode === 'ZONES') {
+                TRAIL_LIFETIME = 0; // No trails
+                zoneGameTimer = ZONES_GAME_TIME;
+                zoneTimer = 0; // Spawn first zone immediately
+                zoneCount = 0;
+                zone = null;
+                ctfTimerEl.style.display = 'block'; // Show game timer
             }
+            
+            // Reset scores for all modes at start
+            player1.score = 0;
+            player2.score = 0;
+            p1RoundScore = 0;
+            p2RoundScore = 0;
             updateScoreUI();
             
             gameModeEl.textContent = gameMode;
@@ -761,7 +802,7 @@
             gameState = 'roundOver';
             
             if (winner) {
-                winner.score++;
+                winner.score++; // This is DM wins
                 showMessage(`${winner.isP1 ? 'PLAYER 1' : 'PLAYER 2'} WINS THE ROUND!`);
                 updateScoreUI();
             } else {
@@ -776,6 +817,91 @@
             }, 2000); 
         }
 
+        // --- ZONES MODE LOGIC ---
+
+        function spawnNewZone() {
+            zoneCount++;
+            
+            // Calculate new radius (linear interpolation)
+            // Lerp: start + (end - start) * t
+            let t = Math.min(zoneCount / ZONES_MAX_COUNT, 1.0); // progress from 0.0 to 1.0
+            let newRadius = ZONES_START_RADIUS + (ZONES_END_RADIUS - ZONES_START_RADIUS) * t;
+            newRadius = Math.max(newRadius, ZONES_END_RADIUS); // Clamp at min
+
+            // Random position, but not too close to the edge
+            let padding = newRadius + 20;
+            let newX = Math.random() * (canvas.width - padding * 2) + padding;
+            let newY = Math.random() * (canvas.height - padding * 2) + padding;
+
+            zone = {
+                x: newX,
+                y: newY,
+                radius: newRadius
+            };
+
+            // Respawn dead players
+            if (player1.isDead) {
+                player1.respawn();
+            }
+            if (player2.isDead) {
+                player2.respawn();
+            }
+        }
+
+        function handleZonesLogic() {
+            zoneTimer--;
+
+            if (zoneTimer <= 0) {
+                
+                // --- NEW: Check for players outside the zone ---
+                if (zone) {
+                    // Check P1
+                    if (!player1.isDead && Math.hypot(player1.x - zone.x, player1.y - zone.y) > zone.radius) {
+                        player1.die();
+                    }
+                    // Check P2
+                    if (!player2.isDead && Math.hypot(player2.x - zone.x, player2.y - zone.y) > zone.radius) {
+                        player2.die();
+                    }
+                }
+                // --- End of new logic ---
+
+                spawnNewZone();
+                zoneTimer = ZONES_INTERVAL; // Reset timer
+            }
+        }
+
+        function drawZone() {
+            if (gameMode === 'ZONES' && zone) {
+                // Draw the main zone area
+                ctx.globalAlpha = 0.2;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw an outer "next zone" warning ring
+                ctx.globalAlpha = 0.5;
+                ctx.strokeStyle = '#ffff00';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Draw a shrinking "timer" ring
+                let timerRadius = zone.radius * (zoneTimer / ZONES_INTERVAL);
+                ctx.globalAlpha = 0.8;
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(zone.x, zone.y, timerRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        // --- GAME FLOW & UI ---
 
         function startCountdown() {
             gameState = 'countdown';
@@ -813,12 +939,24 @@
             let score2 = (gameMode === 'CTF MODE') ? p2RoundScore : player2.score;
 
             let message = '';
-            if (score1 > score2) {
-                message = `PLAYER 1 WINS! (${score1}-${score2})`;
-            } else if (score2 > score1) {
-                message = `PLAYER 2 WINS! (${score1}-${score2})`;
+            if (gameMode === 'ZONES') {
+                // ZONES: Lower score (deaths) wins
+                if (score1 < score2) {
+                    message = `PLAYER 1 WINS! (Deaths: ${score1}-${score2})`;
+                } else if (score2 < score1) {
+                    message = `PLAYER 2 WINS! (Deaths: ${score1}-${score2})`;
+                } else {
+                    message = `GAME TIME UP: TIE! (Deaths: ${score1}-${score2})`;
+                }
             } else {
-                message = 'GAME TIME UP: TIE!';
+                // CTF & DEATHMATCH: Higher score wins
+                if (score1 > score2) {
+                    message = `PLAYER 1 WINS! (${score1}-${score2})`;
+                } else if (score2 > score1) {
+                    message = `PLAYER 2 WINS! (${score1}-${score2})`;
+                } else {
+                    message = 'GAME TIME UP: TIE!';
+                }
             }
             
             showMessage(`${message}\n(Click to Restart)`);
@@ -829,7 +967,7 @@
             if (gameMode === 'CTF MODE') {
                 p1ScoreEl.textContent = p1RoundScore;
                 p2ScoreEl.textContent = p2RoundScore;
-            } else { 
+            } else { // DEATHMATCH and ZONES
                 p1ScoreEl.textContent = player1.score;
                 p2ScoreEl.textContent = player2.score;
             }
@@ -861,6 +999,7 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             drawArena();
+            drawZone(); // Draw zone under players/trails
             
             if (gameState === 'playing') {
                 player1.update();
@@ -868,49 +1007,63 @@
 
                 if (gameMode === 'CTF MODE') {
                     ctfRoundTimer--;
-                    const seconds = Math.ceil(ctfRoundTimer / 60);
-                    const minutes = Math.floor(seconds / 60);
-                    const displaySeconds = seconds % 60;
-                    ctfTimerEl.textContent = `TIME: ${minutes}:${displaySeconds < 10 ? '0' : ''}${displaySeconds} (P1: ${p1RoundScore} | P2: ${p2RoundScore})`;
-
+                    let minutes = Math.floor(ctfRoundTimer / FPS / 60);
+                    let seconds = Math.floor((ctfRoundTimer / FPS) % 60);
+                    ctfTimerEl.textContent = `FLAG TIME: ${minutes}:${seconds.toString().padStart(2, '0')}`;
                     if (ctfRoundTimer <= 0) {
+                        handleGameOverByTimer();
+                    }
+                } else if (gameMode === 'ZONES') {
+                    zoneGameTimer--;
+                    let minutes = Math.floor(zoneGameTimer / FPS / 60);
+                    let seconds = Math.floor((zoneGameTimer / FPS) % 60);
+                    ctfTimerEl.textContent = `GAME TIME: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                    
+                    handleZonesLogic(); // Run zone logic
+
+                    if (zoneGameTimer <= 0) {
                         handleGameOverByTimer();
                     }
                 }
             }
-            
+
+            // Update & Draw Trails
             for (let i = trails.length - 1; i >= 0; i--) {
                 trails[i].update();
-                if (trails[i].lifetime <= 0) { trails.splice(i, 1); }
-            }
-            for (let i = particles.length - 1; i >= 0; i--) {
-                particles[i].update();
-                if (particles[i].lifetime <= 0) { particles.splice(i, 1); }
+                trails[i].draw();
+                if (trails[i].lifetime <= 0) {
+                    trails.splice(i, 1);
+                }
             }
 
-            for (let segment of trails) { segment.draw(); }
-            
+            // Update & Draw Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                if (particles[i].lifetime <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            // Draw Flags
             if (gameMode === 'CTF MODE' && p1Flag && p2Flag) {
                 p1Flag.draw();
                 p2Flag.draw();
             }
-            
-            if (gameState !== 'roundOver') {
-                player1.draw();
-                player2.draw();
-            }
 
-            for (let particle of particles) { particle.draw(); }
-            
+            // Draw Players
+            player1.draw();
+            player2.draw();
+
+            // Update UI
             player1.drawBoostBar(p1BoostEl);
             player2.drawBoostBar(p2BoostEl);
-
-            requestAnimationFrame(gameLoop);
         }
 
-        // --- 8. START THE GAME ---
+        // --- 8. START GAME ---
         initGame();
-        gameLoop();
+        setInterval(gameLoop, 1000 / FPS);
+
     </script>
 </body>
 </html>
