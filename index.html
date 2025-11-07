@@ -147,6 +147,7 @@
         const CTF_TRAIL_LIFETIME = 5 * FPS;      // 5 seconds
         
         const DM_TRAIL_LIFETIME = 8 * FPS;       // 8 seconds (default)
+        const DM_WIN_SCORE = 10;                 // NEW: DM Win Score
 
         // --- ZONES MODE CONSTANTS ---
         const ZONES_GAME_TIME = 300 * FPS;     // 5 minutes
@@ -778,6 +779,9 @@
                 ctfTimerEl.style.display = 'block';
             } else if (gameMode === 'DEATHMATCH') {
                 TRAIL_LIFETIME = DM_TRAIL_LIFETIME; 
+                // We DON'T reset player1.score or player2.score here, so it persists
+                p1RoundScore = 0; // (Not used in DM, but good to reset)
+                p2RoundScore = 0;
             } else if (gameMode === 'ZONES') {
                 TRAIL_LIFETIME = ZONES_TRAIL_LIFETIME; // Trails are on
                 zoneGameTimer = ZONES_GAME_TIME;
@@ -785,13 +789,12 @@
                 zoneCount = 0;
                 zone = null;
                 ctfTimerEl.style.display = 'block'; // Show game timer
+                // Reset death count for the new ZONES match
+                player1.score = 0;
+                player2.score = 0;
             }
             
-            // Reset scores for all modes at start
-            player1.score = 0;
-            player2.score = 0;
-            p1RoundScore = 0;
-            p2RoundScore = 0;
+            // Only update UI once after all scores are set
             updateScoreUI();
             
             gameModeEl.textContent = gameMode;
@@ -806,21 +809,32 @@
         // --- DEATHMATCH SPECIFIC LOGIC ---
         function handleDeathmatchRoundEnd(winner) {
             gameState = 'roundOver';
+            trails = []; // Clear trails immediately
             
             if (winner) {
                 winner.score++; // This is DM wins
-                showMessage(`${winner.isP1 ? 'PLAYER 1' : 'PLAYER 2'} WINS THE ROUND!`);
                 updateScoreUI();
-            } else {
-                showMessage("DRAW! (Double Kill)");
-            }
-            
-            // Clear all trails at the end of a Deathmatch round
-            trails = [];
 
-            setTimeout(() => {
-                startGame(); 
-            }, 2000); 
+                // NEW: Check for game over
+                if (winner.score >= DM_WIN_SCORE) {
+                    gameState = 'gameOver';
+                    let winnerName = winner.isP1 ? 'PLAYER 1' : 'PLAYER 2';
+                    showMessage(`${winnerName} WINS THE MATCH! (${player1.score}-${player2.score})\n(Click to Restart)`);
+                    // DO NOT start a new round
+                } else {
+                    // Game is not over, show round win and start next round
+                    showMessage(`${winner.isP1 ? 'PLAYER 1' : 'PLAYER 2'} WINS THE ROUND!`);
+                    setTimeout(() => {
+                        startGame(); 
+                    }, 2000); 
+                }
+            } else {
+                // It's a draw
+                showMessage("DRAW! (Double Kill)");
+                setTimeout(() => {
+                    startGame(); 
+                }, 2000); 
+            }
         }
 
         // --- ZONES MODE LOGIC ---
