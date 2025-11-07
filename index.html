@@ -145,9 +145,10 @@
         const CTF_ROUND_TIME = 120 * FPS;      // 2 minutes
         const CTF_RESPAWN_TIME = 2 * FPS;        // 2 seconds
         const CTF_TRAIL_LIFETIME = 5 * FPS;      // 5 seconds
+        const CTF_SCORE_IMMUNITY_TIME = 5 * FPS; // 5 seconds
         
         const DM_TRAIL_LIFETIME = 8 * FPS;       // 8 seconds (default)
-        const DM_WIN_SCORE = 10;                 // NEW: DM Win Score
+        const DM_WIN_SCORE = 10;                 // DM Win Score
 
         // --- ZONES MODE CONSTANTS ---
         const ZONES_GAME_TIME = 300 * FPS;     // 5 minutes
@@ -257,7 +258,8 @@
                 this.isBraking = false;
                 this.isDead = false;
                 this.score = 0; // Used for DM wins and ZONES deaths
-                this.immunityTimer = 0;
+                this.immunityTimer = 0; // Spawn immunity
+                this.scoreImmunityTimer = 0; // NEW: CTF score immunity
                 this.isP1 = isP1;
                 this.carryingFlag = null;
                 this.respawnTimer = 0; 
@@ -277,6 +279,8 @@
                 }
                 
                 if (this.immunityTimer > 0) { this.immunityTimer--; }
+                if (this.scoreImmunityTimer > 0) { this.scoreImmunityTimer--; } // NEW
+                
                 if (keys[this.controls.left]) { this.angle -= TURN_SPEED; }
                 if (keys[this.controls.right]) { this.angle += TURN_SPEED; }
                 
@@ -336,7 +340,8 @@
                     // Check if player is near their HOME flag spawn point (x-position)
                     const homeFlagSpawnX = this.isP1 ? P1_START_X - FLAG_OFFSET_X : P2_START_X + FLAG_OFFSET_X;
                     
-                    if (Math.abs(this.x - homeFlagSpawnX) < 30) {
+                    // NEW: Check for score immunity
+                    if (Math.abs(this.x - homeFlagSpawnX) < 30 && this.scoreImmunityTimer <= 0) {
                         this.isP1 ? p1RoundScore++ : p2RoundScore++;
                         
                         this.carryingFlag.isCarried = false;
@@ -396,13 +401,8 @@
 
                 for (let segment of trails) {
                     
-                    // NEW: ZONES mode self-collision check
-                    if (gameMode === 'ZONES' && segment.color === this.color) {
-                        continue; // In ZONES, skip all self-trail checks
-                    }
-
-                    // Original self-collision check for other modes (grace period)
-                    if (gameMode !== 'ZONES' && segment.color === this.color && segment.lifetime > TRAIL_LIFETIME - 15) {
+                    // Original self-collision check for all modes (grace period)
+                    if (segment.color === this.color && segment.lifetime > TRAIL_LIFETIME - 15) {
                         continue;
                     }
                     
@@ -422,6 +422,7 @@
                 
                 if (gameMode === 'CTF MODE') {
                     this.respawnTimer = CTF_RESPAWN_TIME;
+                    this.scoreImmunityTimer = CTF_SCORE_IMMUNITY_TIME; // NEW: Set score immunity
                     
                     // --- Clear player's trail on death in CTF ---
                     for (let i = trails.length - 1; i >= 0; i--) {
@@ -443,10 +444,16 @@
                 }
                 this.speed = 0;
                 
+                // NEW: Handle carried flag on death
                 if (this.carryingFlag) {
-                    this.carryingFlag.isCarried = false;
-                    this.carryingFlag.isDropped = true;
-                    this.carryingFlag = null;
+                    if (gameMode === 'CTF MODE') {
+                        this.carryingFlag.reset(); // Flag resets to base
+                    } else {
+                        // This case shouldn't happen, but good to have
+                        this.carryingFlag.isCarried = false;
+                        this.carryingFlag.isDropped = true; 
+                    }
+                    this.carryingFlag = null; // Player is no longer carrying
                 }
             }
             
@@ -458,6 +465,7 @@
                 this.angle = this.isP1 ? 0 : Math.PI;
                 this.immunityTimer = SPAWN_IMMUNITY_TIME;
                 this.boostCooldownTimer = BOOST_COOLDOWN;
+                // Note: scoreImmunityTimer is NOT reset here, it counts down on its own
             }
 
             draw() {
